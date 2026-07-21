@@ -106,7 +106,7 @@
     <plugin.source.version>3.4.0</plugin.source.version>
     <plugin.javadoc.version>3.12.0</plugin.javadoc.version>
     <plugin.gpg.version>3.2.8</plugin.gpg.version>
-    <plugin.spotless.version>2.44.5</plugin.spotless.version>
+    <plugin.spotless.version>3.8.0</plugin.spotless.version>
     <googlejavaformat.version>1.27.0</googlejavaformat.version>
     <plugin.checkstyle.version>3.6.0</plugin.checkstyle.version>
     <checkstyle.version>10.26.1</checkstyle.version>
