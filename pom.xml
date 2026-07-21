@@ -94,7 +94,7 @@
     <assertj.version>3.27.3</assertj.version>
     <jqwik.version>1.9.3</jqwik.version>
     <testcontainers.version>2.0.5</testcontainers.version>
-    <logback.version>1.5.18</logback.version>
+    <logback.version>1.5.38</logback.version>
     <jmh.version>1.37</jmh.version>
 
     <!-- Plugin versions -->
