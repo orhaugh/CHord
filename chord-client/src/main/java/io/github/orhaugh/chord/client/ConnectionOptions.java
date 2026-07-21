@@ -17,6 +17,7 @@ package io.github.orhaugh.chord.client;
 
 import io.github.orhaugh.chord.ChordConfigurationException;
 import io.github.orhaugh.chord.annotations.Experimental;
+import io.github.orhaugh.chord.codec.block.BlockLimits;
 import io.github.orhaugh.chord.protocol.ProtocolRevisions;
 import io.github.orhaugh.chord.protocol.wire.WireLimits;
 import io.github.orhaugh.chord.transport.TlsOptions;
@@ -50,6 +51,7 @@ public final class ConnectionOptions {
   private final long advertisedRevision;
   private final boolean allowPlaintextPassword;
   private final WireLimits wireLimits;
+  private final BlockLimits blockLimits;
   private final TransportOptions transportOptions;
 
   private ConnectionOptions(Builder builder) {
@@ -64,6 +66,7 @@ public final class ConnectionOptions {
     this.advertisedRevision = builder.advertisedRevision;
     this.allowPlaintextPassword = builder.allowPlaintextPassword;
     this.wireLimits = builder.wireLimits;
+    this.blockLimits = builder.blockLimits;
     this.transportOptions = builder.transportOptions;
   }
 
@@ -187,6 +190,15 @@ public final class ConnectionOptions {
   }
 
   /**
+   * Returns the limits applied to decoded block dimensions.
+   *
+   * @return the block limits
+   */
+  public BlockLimits blockLimits() {
+    return blockLimits;
+  }
+
+  /**
    * Returns the socket configuration.
    *
    * @return the transport options
@@ -227,6 +239,7 @@ public final class ConnectionOptions {
     private long advertisedRevision = ProtocolRevisions.CURRENT;
     private boolean allowPlaintextPassword;
     private WireLimits wireLimits = WireLimits.DEFAULTS;
+    private BlockLimits blockLimits = BlockLimits.DEFAULTS;
     private TransportOptions transportOptions = TransportOptions.DEFAULTS;
 
     private Builder() {}
@@ -375,6 +388,17 @@ public final class ConnectionOptions {
      */
     public Builder wireLimits(WireLimits limits) {
       this.wireLimits = Objects.requireNonNull(limits, "wireLimits");
+      return this;
+    }
+
+    /**
+     * Sets the limits applied to decoded block dimensions.
+     *
+     * @param limits the block limits
+     * @return this builder
+     */
+    public Builder blockLimits(BlockLimits limits) {
+      this.blockLimits = Objects.requireNonNull(limits, "blockLimits");
       return this;
     }
 

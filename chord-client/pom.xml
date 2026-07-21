@@ -43,7 +43,10 @@
       <groupId>io.github.orhaugh</groupId>
       <artifactId>chord-protocol</artifactId>
     </dependency>
-    <!-- chord-codec joins as a dependency in Phase 2 when block codecs exist. -->
+    <dependency>
+      <groupId>io.github.orhaugh</groupId>
+      <artifactId>chord-codec</artifactId>
+    </dependency>
     <dependency>
       <groupId>io.github.orhaugh</groupId>
       <artifactId>chord-transport</artifactId>

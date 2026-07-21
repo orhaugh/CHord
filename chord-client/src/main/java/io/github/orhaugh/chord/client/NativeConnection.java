@@ -18,6 +18,7 @@ package io.github.orhaugh.chord.client;
 import io.github.orhaugh.chord.ChordConfigurationException;
 import io.github.orhaugh.chord.ChordProtocolException;
 import io.github.orhaugh.chord.annotations.Experimental;
+import io.github.orhaugh.chord.codec.block.BlockLimits;
 import io.github.orhaugh.chord.protocol.ClientPacketType;
 import io.github.orhaugh.chord.protocol.Progress;
 import io.github.orhaugh.chord.protocol.ProtocolFeature;
@@ -35,7 +36,9 @@ import io.github.orhaugh.chord.protocol.wire.WireWriter;
 import io.github.orhaugh.chord.transport.NativeTransport;
 import io.github.orhaugh.chord.transport.TcpTransport;
 import io.github.orhaugh.chord.transport.TlsTransport;
+import java.net.InetAddress;
 import java.net.SocketAddress;
+import java.time.ZoneId;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,6 +74,8 @@ public final class NativeConnection implements AutoCloseable {
   private final ServerHello serverHello;
   private final long negotiatedRevision;
   private final ConnectionStateMachine state;
+  private final ConnectionOptions options;
+  private volatile ZoneId sessionTimezone;
 
   private NativeConnection(
       long id,
@@ -79,7 +84,8 @@ public final class NativeConnection implements AutoCloseable {
       WireWriter out,
       ServerHello serverHello,
       long negotiatedRevision,
-      ConnectionStateMachine state) {
+      ConnectionStateMachine state,
+      ConnectionOptions options) {
     this.id = id;
     this.transport = transport;
     this.in = in;
@@ -87,6 +93,17 @@ public final class NativeConnection implements AutoCloseable {
     this.serverHello = serverHello;
     this.negotiatedRevision = negotiatedRevision;
     this.state = state;
+    this.options = options;
+    this.sessionTimezone = parseZone(serverHello.timezone().orElse("UTC"));
+  }
+
+  private static ZoneId parseZone(String zoneName) {
+    try {
+      return ZoneId.of(zoneName);
+    } catch (RuntimeException e) {
+      LOG.warn("unknown server timezone \"{}\"; DateTime columns fall back to UTC", zoneName);
+      return ZoneId.of("UTC");
+    }
   }
 
   /**
@@ -153,7 +170,7 @@ public final class NativeConnection implements AutoCloseable {
       }
 
       NativeConnection connection =
-          new NativeConnection(id, transport, in, out, serverHello, negotiated, state);
+          new NativeConnection(id, transport, in, out, serverHello, negotiated, state, options);
       state.transitionTo(ConnectionState.READY);
       LOG.debug(
           "connection {} established to {} ({} {} revision {}, negotiated {})",
@@ -274,6 +291,77 @@ public final class NativeConnection implements AutoCloseable {
    */
   public SocketAddress remoteAddress() {
     return transport.remoteAddress();
+  }
+
+  /**
+   * Executes a query and returns a streaming columnar result.
+   *
+   * <p>The connection is occupied until the result is closed or exhausted; the schema header is
+   * available on the returned result before any row data is consumed. A server side error surfaces
+   * as {@link io.github.orhaugh.chord.ChordServerException} from the first {@code nextBlock()} call
+   * that encounters it (or from this method when the server rejects the query before sending any
+   * data), and the connection remains usable afterwards because an Exception packet is a defined
+   * stream terminator.
+   *
+   * @param request the query to execute
+   * @return the streaming result, which must be closed
+   */
+  public QueryResult query(QueryRequest request) {
+    state.transitionTo(ConnectionState.WRITING_QUERY);
+    try {
+      QueryCodec.writeQuery(out, request, options, negotiatedRevision, osUser(), localHostname());
+      out.flush();
+      state.transitionTo(ConnectionState.READING_RESPONSE);
+      LOG.debug("connection {} query {} sent", id, request.queryId());
+      return new NativeQueryResult(this, in, request.queryId());
+    } catch (RuntimeException e) {
+      // A server Exception packet received while priming the result concludes the stream
+      // cleanly and has already returned the connection to READY; only failures that leave
+      // the exchange unfinished poison the connection.
+      ConnectionState current = state.state();
+      if (current == ConnectionState.WRITING_QUERY || current == ConnectionState.READING_RESPONSE) {
+        markBroken();
+      }
+      throw e;
+    }
+  }
+
+  private static String osUser() {
+    return System.getProperty("user.name", "");
+  }
+
+  private static String localHostname() {
+    try {
+      return InetAddress.getLocalHost().getHostName();
+    } catch (Exception e) {
+      return "";
+    }
+  }
+
+  /** Returns the block decode limits configured for this connection. */
+  BlockLimits blockLimits() {
+    return options.blockLimits();
+  }
+
+  /** Returns the current session timezone, as updated by TimezoneUpdate packets. */
+  ZoneId sessionTimezone() {
+    return sessionTimezone;
+  }
+
+  /** Applies a TimezoneUpdate packet to the session. */
+  void updateSessionTimezone(String zoneName) {
+    this.sessionTimezone = parseZone(zoneName);
+    LOG.debug("connection {} session timezone changed to {}", id, sessionTimezone);
+  }
+
+  /** Marks a cleanly concluded response stream, returning the connection to READY. */
+  void finishResponse() {
+    state.transitionTo(ConnectionState.READY);
+  }
+
+  /** Marks the connection broken from the result pump. */
+  void markBrokenPublic() {
+    markBroken();
   }
 
   /**
