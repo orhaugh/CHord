@@ -115,7 +115,7 @@
     <plugin.cyclonedx.version>2.9.1</plugin.cyclonedx.version>
     <plugin.license.version>5.0.0</plugin.license.version>
     <plugin.japicmp.version>0.23.1</plugin.japicmp.version>
-    <plugin.shade.version>3.6.0</plugin.shade.version>
+    <plugin.shade.version>3.6.2</plugin.shade.version>
     <plugin.central.version>0.11.0</plugin.central.version>
   </properties>
 
