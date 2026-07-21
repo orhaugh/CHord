@@ -1,0 +1,51 @@
+name: ClickHouse compatibility
+
+on:
+  schedule:
+    # Nightly sweep across every supported server release plus the newest builds.
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - clickhouse/clickhouse-server:25.8
+          - clickhouse/clickhouse-server:26.3
+          - clickhouse/clickhouse-server:26.6
+          - clickhouse/clickhouse-server:latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Compatibility tests
+        run: >
+          ./mvnw -B -ntp -Pcompatibility-tests verify
+          -Dchord.testkit.clickhouse.image=${{ matrix.image }}
+
+  head:
+    name: clickhouse/clickhouse-server:head (informational)
+    runs-on: ubuntu-latest
+    # Unreleased upstream builds may break; failures here are signals, not blockers.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Compatibility tests against head
+        run: >
+          ./mvnw -B -ntp -Pcompatibility-tests verify
+          -Dchord.testkit.clickhouse.image=clickhouse/clickhouse-server:head
