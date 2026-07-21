@@ -1,0 +1,141 @@
+# CHord
+
+A Java client for [ClickHouse](https://clickhouse.com) built on the ClickHouse **native TCP wire
+protocol**. The native protocol implementation is the product: no HTTP tunnelling, no JDBC as the
+internal abstraction, no wrapping of `clickhouse-client`.
+
+[![CI](https://github.com/orhaugh/CHord/actions/workflows/ci.yml/badge.svg)](https://github.com/orhaugh/CHord/actions/workflows/ci.yml)
+[![ClickHouse compatibility](https://github.com/orhaugh/CHord/actions/workflows/compatibility.yml/badge.svg)](https://github.com/orhaugh/CHord/actions/workflows/compatibility.yml)
+[![License](https://img.shields.io/badge/licence-Apache%202.0-blue.svg)](LICENSE)
+
+## Status: early development
+
+CHord is pre 0.1 and **not yet published to Maven Central**. The entire public API is
+experimental and will change. What exists today is the foundation and the first slice of the
+protocol, implemented against the current ClickHouse sources and tested against real servers:
+
+| Capability | Status |
+|---|---|
+| Native TCP transport with connect and read deadlines | Done |
+| Handshake at protocol revision 54488, including the server settings block, chunked capability negotiation and password complexity rules | Done, byte level and integration tested |
+| Password authentication with typed failures | Done |
+| Ping and Pong with stale Progress tolerance | Done |
+| Connection state machine, no reuse after protocol violations | Done |
+| Plaintext password protection (explicit opt in required) | Done |
+| TLS and mutual TLS | Planned, Phase 1 |
+| SELECT streaming, columnar blocks, the type system | Planned, Phase 2 |
+| Native INSERT streaming | Planned, Phase 3 |
+| LZ4 and ZSTD compression, logs, profile events, chunked framing | Planned, Phase 4 |
+| Pooling, failover, retry classification, cancellation | Planned, Phase 5 |
+| LowCardinality, Variant, Dynamic, JSON serialisations | Planned, Phase 6 |
+| JDBC adapter | Planned, Phase 7 |
+
+The full roadmap with per feature milestones lives in
+[docs/unsupported-features.md](docs/unsupported-features.md). Protocol coverage is tracked in
+[docs/protocol-compatibility.md](docs/protocol-compatibility.md) and type coverage in
+[docs/type-support.md](docs/type-support.md). Nothing is claimed as supported without automated
+tests.
+
+## Supported ClickHouse servers
+
+CHord is tested in CI against every currently supported ClickHouse release: **25.8 (LTS), 26.3
+(LTS) and 26.6**, plus the newest builds in a nightly compatibility sweep. Servers older than
+protocol revision 54458 are refused explicitly. A protocol revision is not a server version; see
+[docs/protocol-compatibility.md](docs/protocol-compatibility.md).
+
+## Requirements
+
+- Java 21 or newer at runtime (artifacts are built with `--release 21`)
+- ClickHouse 25.8 or newer
+
+## Using it today
+
+Until the first Maven Central release, build and install locally:
+
+```bash
+git clone https://github.com/orhaugh/CHord.git
+cd CHord
+./mvnw install
+```
+
+Then, with `chord-client` on the classpath:
+
+```java
+import io.github.orhaugh.chord.client.ConnectionOptions;
+import io.github.orhaugh.chord.client.NativeConnection;
+
+ConnectionOptions options = ConnectionOptions.builder()
+    .host("localhost")
+    .port(9000)
+    .username("default")
+    .build();
+
+try (NativeConnection connection = NativeConnection.open(options)) {
+    System.out.println(connection.serverHello().serverName() + " "
+        + connection.serverHello().versionString()
+        + ", negotiated revision " + connection.negotiatedRevision());
+    connection.ping();
+}
+```
+
+Password authentication over plain TCP requires an explicit opt in, because the native protocol
+carries the password verbatim:
+
+```java
+ConnectionOptions options = ConnectionOptions.builder()
+    .host("localhost")
+    .username("app")
+    .password(secretChars)
+    .allowPlaintextPassword(true) // remove once TLS support lands
+    .build();
+```
+
+A runnable version of this is in
+[chord-examples](chord-examples/src/main/java/io/github/orhaugh/chord/examples/PingExample.java).
+The query API arrives in Phase 2; this README grows with the client.
+
+## Modules
+
+| Module | Purpose |
+|---|---|
+| `chord-protocol` | Wire primitives, packet models, revision registry, handshake codecs, state machine, exceptions. Zero dependencies. |
+| `chord-codec` | Native block codecs, the type system, compression. Placeholder until Phase 2. |
+| `chord-transport` | Blocking TCP transport behind an SPI; TLS lands here. |
+| `chord-client` | The client API. Currently the low level `NativeConnection`. |
+| `chord-observability` | Micrometer, OpenTelemetry and JFR integrations. Placeholder until Phase 5. |
+| `chord-jdbc` | JDBC 4.3 adapter over the native client. Placeholder until Phase 7. |
+| `chord-testkit` | Testcontainers fixture for ClickHouse with native port access. |
+| `chord-examples` | Runnable examples. Not published. |
+| `chord-benchmarks` | JMH benchmarks, built with `-Pbenchmarks`. Not published. |
+| `chord-bom` | Bill of materials aligning module versions. |
+
+## Building and testing
+
+```bash
+./mvnw verify                       # build, unit tests, static analysis
+./mvnw -Pcoverage verify            # adds JaCoCo reports
+./mvnw -Pintegration-tests verify   # adds Testcontainers integration tests (needs Docker)
+./mvnw -Pcompatibility-tests verify -Dchord.testkit.clickhouse.image=clickhouse/clickhouse-server:26.6
+./mvnw -Pbenchmarks package         # builds the JMH jar
+```
+
+Formatting is enforced by google-java-format through Spotless; run `./mvnw spotless:apply` before
+committing. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow and
+[docs/architecture.md](docs/architecture.md) for how the modules fit together.
+
+## Design rules that will not change
+
+- The ClickHouse source code is the protocol authority; documentation comes second.
+- Unknown packets, unknown serialisation versions and out of bounds lengths are explicit errors,
+  never guesses. A connection that has seen one is never reused.
+- Every length read from the wire is treated as hostile and bounded.
+- Writes with unknown outcomes are not retried automatically.
+- No feature is marked supported without byte level and real server tests.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the vulnerability reporting process.
+
+## Licence
+
+[Apache License 2.0](LICENSE). Copyright 2026 Ross Haugh.
