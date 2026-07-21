@@ -19,6 +19,7 @@ import io.github.orhaugh.chord.ChordConfigurationException;
 import io.github.orhaugh.chord.annotations.Experimental;
 import io.github.orhaugh.chord.protocol.ProtocolRevisions;
 import io.github.orhaugh.chord.protocol.wire.WireLimits;
+import io.github.orhaugh.chord.transport.TlsOptions;
 import io.github.orhaugh.chord.transport.TransportOptions;
 import java.time.Duration;
 import java.util.Arrays;
@@ -32,14 +33,15 @@ import java.util.Objects;
  *
  * <p>Security default: a non empty password is refused over a plaintext transport unless {@link
  * Builder#allowPlaintextPassword(boolean)} is explicitly enabled, because the native protocol sends
- * the password verbatim inside the handshake. Prefer TLS, which arrives with the transport work of
- * Phase 1; the opt in exists for development and for networks that are secured by other means.
+ * the password verbatim inside the handshake. Configure {@link Builder#tls(TlsOptions)} instead;
+ * the opt in exists for development and for networks that are secured by other means.
  */
 @Experimental
 public final class ConnectionOptions {
 
   private final String host;
   private final int port;
+  private final TlsOptions tls;
   private final String database;
   private final String username;
   private final char[] password;
@@ -52,7 +54,8 @@ public final class ConnectionOptions {
 
   private ConnectionOptions(Builder builder) {
     this.host = builder.host;
-    this.port = builder.port;
+    this.port = builder.resolvedPort();
+    this.tls = builder.tls;
     this.database = builder.database;
     this.username = builder.username;
     this.password = builder.password.clone();
@@ -89,6 +92,15 @@ public final class ConnectionOptions {
    */
   public int port() {
     return port;
+  }
+
+  /**
+   * Returns the TLS configuration, empty for plain TCP.
+   *
+   * @return the TLS options
+   */
+  public java.util.Optional<TlsOptions> tls() {
+    return java.util.Optional.ofNullable(tls);
   }
 
   /**
@@ -194,6 +206,8 @@ public final class ConnectionOptions {
         + ", username="
         + username
         + ", password=<redacted>"
+        + ", tls="
+        + (tls != null)
         + ", advertisedRevision="
         + advertisedRevision
         + "}";
@@ -203,7 +217,8 @@ public final class ConnectionOptions {
   public static final class Builder {
 
     private String host;
-    private int port = 9000;
+    private Integer port;
+    private TlsOptions tls;
     private String database = "";
     private String username = "default";
     private char[] password = new char[0];
@@ -228,13 +243,28 @@ public final class ConnectionOptions {
     }
 
     /**
-     * Sets the native protocol port. Defaults to 9000, the conventional plain TCP port.
+     * Sets the native protocol port explicitly. When not set, the port defaults to 9000 for plain
+     * TCP and to 9440, the conventional secure native port, once {@link #tls(TlsOptions)} is
+     * configured.
      *
      * @param port the port
      * @return this builder
      */
     public Builder port(int port) {
       this.port = port;
+      return this;
+    }
+
+    /**
+     * Enables TLS for the connection. Hostname verification is always on; see {@link TlsOptions}
+     * for trust and client certificate material. With TLS configured, passwords no longer require
+     * the plaintext opt in and the default port becomes 9440.
+     *
+     * @param tls the TLS configuration
+     * @return this builder
+     */
+    public Builder tls(TlsOptions tls) {
+      this.tls = Objects.requireNonNull(tls, "tls");
       return this;
     }
 
@@ -390,8 +420,10 @@ public final class ConnectionOptions {
       if (host == null || host.isBlank()) {
         throw new ChordConfigurationException("host is required");
       }
-      if (port < 1 || port > 65535) {
-        throw new ChordConfigurationException("port must be between 1 and 65535, was " + port);
+      int resolvedPort = resolvedPort();
+      if (resolvedPort < 1 || resolvedPort > 65535) {
+        throw new ChordConfigurationException(
+            "port must be between 1 and 65535, was " + resolvedPort);
       }
       if (advertisedRevision < ProtocolRevisions.MIN_SUPPORTED_SERVER_REVISION
           || advertisedRevision > ProtocolRevisions.CURRENT) {
@@ -404,6 +436,13 @@ public final class ConnectionOptions {
                 + advertisedRevision);
       }
       return new ConnectionOptions(this);
+    }
+
+    private int resolvedPort() {
+      if (port != null) {
+        return port;
+      }
+      return tls != null ? 9440 : 9000;
     }
   }
 

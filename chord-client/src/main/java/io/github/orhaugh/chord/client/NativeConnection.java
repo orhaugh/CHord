@@ -34,6 +34,7 @@ import io.github.orhaugh.chord.protocol.wire.WireReader;
 import io.github.orhaugh.chord.protocol.wire.WireWriter;
 import io.github.orhaugh.chord.transport.NativeTransport;
 import io.github.orhaugh.chord.transport.TcpTransport;
+import io.github.orhaugh.chord.transport.TlsTransport;
 import java.net.SocketAddress;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
@@ -89,15 +90,23 @@ public final class NativeConnection implements AutoCloseable {
   }
 
   /**
-   * Connects over plain TCP, performs the handshake and authenticates.
+   * Connects over plain TCP, or over TLS when {@link ConnectionOptions#tls()} is configured,
+   * performs the handshake and authenticates. TLS connections verify the server hostname during the
+   * handshake and carry passwords without any plaintext opt in.
    *
    * @param options connection configuration
    * @return a connection in {@link ConnectionState#READY}
    */
   public static NativeConnection open(ConnectionOptions options) {
-    requirePlaintextPasswordOptIn(options, false);
-    NativeTransport transport =
-        TcpTransport.connect(options.host(), options.port(), options.transportOptions());
+    NativeTransport transport;
+    if (options.tls().isPresent()) {
+      transport =
+          TlsTransport.connect(
+              options.host(), options.port(), options.transportOptions(), options.tls().get());
+    } else {
+      requirePlaintextPasswordOptIn(options, false);
+      transport = TcpTransport.connect(options.host(), options.port(), options.transportOptions());
+    }
     return open(options, transport);
   }
 

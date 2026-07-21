@@ -70,6 +70,26 @@ class ConnectionOptionsTest {
   }
 
   @Test
+  void portDefaultsFollowTheTransport() {
+    assertThat(ConnectionOptions.builder().host("h").build().port()).isEqualTo(9000);
+    assertThat(
+            ConnectionOptions.builder()
+                .host("h")
+                .tls(io.github.orhaugh.chord.transport.TlsOptions.systemTrust())
+                .build()
+                .port())
+        .isEqualTo(9440);
+    assertThat(
+            ConnectionOptions.builder()
+                .host("h")
+                .tls(io.github.orhaugh.chord.transport.TlsOptions.systemTrust())
+                .port(9001)
+                .build()
+                .port())
+        .isEqualTo(9001);
+  }
+
+  @Test
   void neverExposesThePassword() {
     ConnectionOptions options =
         ConnectionOptions.builder().host("h").password("hunter2".toCharArray()).build();
