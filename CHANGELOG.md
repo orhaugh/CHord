@@ -8,6 +8,19 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ### Added
 
+- `chord-transport`: TLS and mutual TLS for the native protocol. Hostname verification is always
+  on (no disable switch, no trust-all option anywhere), SNI for hostnames, trust material from
+  the system store, JKS or PKCS#12 files, PEM CA bundles or a custom `SSLContext`, client
+  material from key stores or PEM certificate plus PKCS#8 key (encrypted keys supported),
+  configurable protocols and cipher suites, diagnosed handshake failures (expiry, hostname
+  mismatch, missing trust, rejected client certificate) and an expiry warning for certificates
+  within thirty days of their end date.
+- `chord-client`: `ConnectionOptions.tls(TlsOptions)`; with TLS configured the default port
+  becomes 9440 and passwords need no plaintext opt in.
+- `chord-testkit`: test run time certificate generation (`TestCertificates`, BouncyCastle
+  confined to the testkit) and a secure native port for the ClickHouse fixture, including strict
+  client certificate verification for mutual TLS tests.
+
 - Maven multi module build (`chord-bom`, `chord-protocol`, `chord-codec`, `chord-transport`,
   `chord-client`, `chord-observability`, `chord-jdbc`, `chord-testkit`, `chord-examples`,
   `chord-benchmarks`) with reproducible builds, Spotless, Checkstyle, SpotBugs, JaCoCo, licence

@@ -22,7 +22,7 @@ protocol, implemented against the current ClickHouse sources and tested against 
 | Ping and Pong with stale Progress tolerance | Done |
 | Connection state machine, no reuse after protocol violations | Done |
 | Plaintext password protection (explicit opt in required) | Done |
-| TLS and mutual TLS | Planned, Phase 1 |
+| TLS and mutual TLS: hostname verification always on, SNI, system/JKS/PKCS#12/PEM trust, PEM and key store client material, expiry diagnostics | Done, tested against local TLS servers and real ClickHouse |
 | SELECT streaming, columnar blocks, the type system | Planned, Phase 2 |
 | Native INSERT streaming | Planned, Phase 3 |
 | LZ4 and ZSTD compression, logs, profile events, chunked framing | Planned, Phase 4 |
@@ -78,6 +78,29 @@ try (NativeConnection connection = NativeConnection.open(options)) {
 }
 ```
 
+The production path for password authentication is TLS; the default port becomes 9440 and
+hostname verification is always on:
+
+```java
+import io.github.orhaugh.chord.transport.TlsOptions;
+
+ConnectionOptions options = ConnectionOptions.builder()
+    .host("clickhouse.example.com")
+    .username("app")
+    .password(secretChars)
+    .tls(TlsOptions.systemTrust()) // or trustedCertificates(caPem) for a private CA
+    .build();
+```
+
+Mutual TLS presents a client certificate from PEM or a key store:
+
+```java
+TlsOptions mutualTls = TlsOptions.builder()
+    .trustedCertificates(Path.of("ca.crt"))
+    .clientCertificate(Path.of("client.crt"), Path.of("client.key"), null)
+    .build();
+```
+
 Password authentication over plain TCP requires an explicit opt in, because the native protocol
 carries the password verbatim:
 
@@ -86,7 +109,7 @@ ConnectionOptions options = ConnectionOptions.builder()
     .host("localhost")
     .username("app")
     .password(secretChars)
-    .allowPlaintextPassword(true) // remove once TLS support lands
+    .allowPlaintextPassword(true) // development only; prefer tls(...)
     .build();
 ```
 
@@ -100,7 +123,7 @@ The query API arrives in Phase 2; this README grows with the client.
 |---|---|
 | `chord-protocol` | Wire primitives, packet models, revision registry, handshake codecs, state machine, exceptions. Zero dependencies. |
 | `chord-codec` | Native block codecs, the type system, compression. Placeholder until Phase 2. |
-| `chord-transport` | Blocking TCP transport behind an SPI; TLS lands here. |
+| `chord-transport` | Blocking TCP and TLS transports behind an SPI. |
 | `chord-client` | The client API. Currently the low level `NativeConnection`. |
 | `chord-observability` | Micrometer, OpenTelemetry and JFR integrations. Placeholder until Phase 5. |
 | `chord-jdbc` | JDBC 4.3 adapter over the native client. Placeholder until Phase 7. |

@@ -4,13 +4,14 @@ The written list of everything CHord does not do yet, with the milestone that de
 is the honest counterpart to the README status table. Milestones follow the phase plan; a feature
 moves off this list only when it lands with tests.
 
-## Phase 1 remainder: transport security and authentication
+## Phase 1 remainder: authentication plumbing
+
+TLS and mutual TLS shipped (hostname verification always on, SNI, system, JKS, PKCS#12 and PEM
+trust material, PEM and key store client material, custom `SSLContext`, expiry diagnostics); see
+ADR-0012. What remains from the Phase 1 authentication scope:
 
 | Feature | Notes |
 |---|---|
-| TLS transport | Secure defaults, hostname verification on by default, SNI, configurable protocols and cipher suites |
-| Mutual TLS | Client certificates, JKS, PKCS#12 and PEM material, custom `SSLContext` |
-| Certificate diagnostics | Expiry warnings, clear handshake failures |
 | Pluggable credential providers | Credential rotation on new connections |
 
 ## Phase 2: uncompressed SELECT

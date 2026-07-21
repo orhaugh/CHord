@@ -36,8 +36,10 @@ Rules:
   identifiers, the revision and feature registry, handshake structures, wire primitives, the
   connection state machine and the exception hierarchy. It must never depend on pooling, JDBC,
   object mapping or frameworks.
-- `chord-transport` provides byte transports behind the `NativeTransport` SPI. It knows nothing
-  about packets. `isSecure()` is part of the SPI because credential policy keys off it.
+- `chord-transport` provides byte transports behind the `NativeTransport` SPI: plain TCP and
+  TLS, which layers JSSE over the same dial and deadlines with hostname verification that cannot
+  be disabled (ADR-0012). It knows nothing about packets. `isSecure()` is part of the SPI
+  because credential policy keys off it.
 - `chord-codec` will own native block encoding, the recursive type model, the type name parser
   and compression framing from Phase 2.
 - `chord-client` composes the three into the public client: today the low level

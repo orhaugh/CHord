@@ -43,6 +43,29 @@ release, it is a CHord bug: capture TRACE logs and open an issue with the server
 strict `proto_caps` requiring chunked framing, which CHord implements in Phase 4. Until then set
 the server capability to an optional or notchunked mode, or wait for Phase 4.
 
+## TLS
+
+**`... the server certificate is not trusted (PKIX path building failed ...)`**. The client does
+not trust the issuing CA. For a private CA, point `TlsOptions.builder().trustedCertificates(...)`
+at the CA PEM bundle, or use a JKS or PKCS#12 trust store.
+
+**`... hostname verification rejected the server certificate`**. The certificate does not name
+the host you connected to. Connect using a name the certificate carries, or reissue the
+certificate with correct subject alternative names (including IP SANs when clients connect by
+IP). CHord has no switch to disable hostname verification; that is deliberate.
+
+**`... the server certificate has expired`**. Renew the server certificate. CHord also logs a
+warning after successful handshakes when the certificate expires within thirty days.
+
+**`... holds a traditional RSA PRIVATE KEY block`**. Convert the client key to PKCS#8:
+`openssl pkcs8 -topk8 -nocrypt -in key.pem -out key-pkcs8.pem`.
+
+**TLS to the wrong port**. Connecting with TLS to the plaintext port (9000) fails during the
+handshake with an unrecognisable-record error; connecting plain TCP to the TLS port (9440)
+fails with a protocol or truncated-stream error. The conventional ports are 9000 plain and
+9440 TLS, and CHord defaults the port to 9440 whenever `tls(...)` is configured and no port is
+set.
+
 ## Timeouts mid exchange
 
 **`ChordTimeoutException: Read timed out after consuming N bytes`**. The read deadline
