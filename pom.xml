@@ -89,7 +89,7 @@
     <chord.testkit.clickhouse.image/>
 
     <!-- Dependency versions -->
-    <slf4j.version>2.0.17</slf4j.version>
+    <slf4j.version>2.0.18</slf4j.version>
     <junit.version>5.12.2</junit.version>
     <assertj.version>3.27.3</assertj.version>
     <jqwik.version>1.9.3</jqwik.version>
