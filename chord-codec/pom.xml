@@ -29,16 +29,13 @@
 
   <name>CHord Codec</name>
   <description>
-    Native block encoding and decoding, the ClickHouse type parser, column codecs, compression
-    frames and Java type mappings. Implementation lands in Phase 2 and later; this module carries
-    no functionality yet and makes no support claims.
+    The ClickHouse type model and type name parser, primitive columnar values, column codecs and
+    native block decoding. Compression frames arrive in Phase 4; LowCardinality, Variant, Dynamic
+    and JSON decoding in Phase 6.
   </description>
 
   <properties>
     <chord.automatic.module.name>io.github.orhaugh.chord.codec</chord.automatic.module.name>
-    <!-- Placeholder module: not published until it carries real code (Phase 2). -->
-    <maven.deploy.skip>true</maven.deploy.skip>
-    <maven.javadoc.skip>true</maven.javadoc.skip>
   </properties>
 
   <dependencies>
@@ -51,17 +48,15 @@
       <artifactId>junit-jupiter</artifactId>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>net.jqwik</groupId>
+      <artifactId>jqwik</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
-
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.sonatype.central</groupId>
-        <artifactId>central-publishing-maven-plugin</artifactId>
-        <configuration>
-          <skipPublishing>true</skipPublishing>
-        </configuration>
-      </plugin>
-    </plugins>
-  </build>
 </project>
