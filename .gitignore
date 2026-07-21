@@ -1,0 +1,25 @@
+# Build output
+target/
+*.class
+
+# IDE metadata
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.classpath
+.project
+.settings/
+
+# Maven wrapper downloads (regenerated on demand)
+.mvn/wrapper/maven-wrapper.jar
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Local environment
+*.log
+.env
+.claude/

@@ -1,0 +1,14 @@
+# Normalise line endings so byte-level golden tests behave identically everywhere.
+* text=auto eol=lf
+
+*.java text eol=lf
+*.xml text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.properties text eol=lf
+
+mvnw text eol=lf
+*.cmd text eol=crlf
+
+*.jar binary
+*.png binary
