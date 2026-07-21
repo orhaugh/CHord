@@ -29,8 +29,9 @@
 
   <name>CHord Transport</name>
   <description>
-    Blocking TCP transport for the ClickHouse native protocol: socket configuration, connect and
-    read deadlines and the transport SPI behind which TLS and future transports sit.
+    Blocking TCP and TLS transports for the ClickHouse native protocol: socket configuration,
+    connect and read deadlines, always-on hostname verification, mutual TLS, and the transport
+    SPI behind which future transports sit.
   </description>
 
   <properties>
@@ -43,6 +44,10 @@
       <artifactId>chord-protocol</artifactId>
     </dependency>
     <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+    </dependency>
+    <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
       <scope>test</scope>
@@ -50,6 +55,18 @@
     <dependency>
       <groupId>org.assertj</groupId>
       <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- Generated TLS certificates for transport tests; no dependency cycle,
+         chord-testkit depends on no CHord module. -->
+    <dependency>
+      <groupId>io.github.orhaugh</groupId>
+      <artifactId>chord-testkit</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

@@ -58,8 +58,22 @@ public final class TcpTransport implements NativeTransport {
    */
   public static TcpTransport connect(String host, int port, TransportOptions options) {
     InetSocketAddress address = new InetSocketAddress(host, port);
+    Socket socket = dial(address, options);
+    try {
+      return new TcpTransport(socket, address, socket.getInputStream(), socket.getOutputStream());
+    } catch (IOException e) {
+      closeQuietly(socket);
+      throw new ChordTransportException("Failed to open streams to " + address, e);
+    }
+  }
+
+  /**
+   * Establishes a configured, connected plain socket. Shared with {@link TlsTransport}, which
+   * layers the TLS engine on top of the same dial behaviour and deadlines.
+   */
+  static Socket dial(InetSocketAddress address, TransportOptions options) {
     if (address.isUnresolved()) {
-      throw new ChordTransportException("Cannot resolve host " + host);
+      throw new ChordTransportException("Cannot resolve host " + address.getHostString());
     }
     Socket socket = new Socket();
     try {
@@ -73,7 +87,7 @@ public final class TcpTransport implements NativeTransport {
       }
       socket.connect(address, (int) options.connectTimeout().toMillis());
       socket.setSoTimeout((int) options.readTimeout().toMillis());
-      return new TcpTransport(socket, address, socket.getInputStream(), socket.getOutputStream());
+      return socket;
     } catch (SocketTimeoutException e) {
       closeQuietly(socket);
       throw new ChordTimeoutException(
@@ -114,7 +128,7 @@ public final class TcpTransport implements NativeTransport {
     closeQuietly(socket);
   }
 
-  private static void closeQuietly(Socket socket) {
+  static void closeQuietly(Socket socket) {
     try {
       socket.close();
     } catch (IOException e) {
