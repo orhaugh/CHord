@@ -23,7 +23,7 @@ protocol, implemented against the current ClickHouse sources and tested against 
 | Connection state machine, no reuse after protocol violations | Done |
 | Plaintext password protection (explicit opt in required) | Done |
 | TLS and mutual TLS: hostname verification always on, SNI, system/JKS/PKCS#12/PEM trust, PEM and key store client material, expiry diagnostics | Done, tested against local TLS servers and real ClickHouse |
-| SELECT streaming, columnar blocks, the type system | Planned, Phase 2 |
+| Streaming SELECT: Query packet with full ClientInfo, native block decoding, typed columnar access, parameters, settings, totals, extremes, profile info, progress | Done, byte level and integration tested, values differentially checked against clickhouse-client |
 | Native INSERT streaming | Planned, Phase 3 |
 | LZ4 and ZSTD compression, logs, profile events, chunked framing | Planned, Phase 4 |
 | Pooling, failover, retry classification, cancellation | Planned, Phase 5 |
@@ -63,6 +63,8 @@ Then, with `chord-client` on the classpath:
 ```java
 import io.github.orhaugh.chord.client.ConnectionOptions;
 import io.github.orhaugh.chord.client.NativeConnection;
+import io.github.orhaugh.chord.client.QueryRequest;
+import io.github.orhaugh.chord.client.QueryResult;
 
 ConnectionOptions options = ConnectionOptions.builder()
     .host("localhost")
@@ -71,12 +73,31 @@ ConnectionOptions options = ConnectionOptions.builder()
     .build();
 
 try (NativeConnection connection = NativeConnection.open(options)) {
-    System.out.println(connection.serverHello().serverName() + " "
-        + connection.serverHello().versionString()
-        + ", negotiated revision " + connection.negotiatedRevision());
     connection.ping();
+
+    QueryRequest request = QueryRequest.builder(
+            "SELECT number, toString(number) AS s FROM system.numbers LIMIT {n:UInt64}")
+        .parameter("n", 1000)
+        .setting("max_block_size", 65536)
+        .build();
+
+    try (QueryResult result = connection.query(request)) {
+        var header = result.header().orElseThrow(); // schema before any rows
+        java.util.Optional<io.github.orhaugh.chord.codec.block.Block> next;
+        while ((next = result.nextBlock()).isPresent()) {
+            var block = next.orElseThrow();
+            var numbers = (io.github.orhaugh.chord.codec.column.Columns.UInt64Column) block.column(0);
+            for (int i = 0; i < block.rows(); i++) {
+                long value = numbers.rawLongAt(i); // no per cell allocation
+            }
+        }
+        System.out.println("read " + result.totalProgress().readRows() + " rows");
+    }
 }
 ```
+
+Blocks stream one at a time with bounded memory; the columnar accessors are the primary API and
+never allocate one object per cell on the main path.
 
 The production path for password authentication is TLS; the default port becomes 9440 and
 hostname verification is always on:
@@ -115,16 +136,15 @@ ConnectionOptions options = ConnectionOptions.builder()
 
 A runnable version of this is in
 [chord-examples](chord-examples/src/main/java/io/github/orhaugh/chord/examples/PingExample.java).
-The query API arrives in Phase 2; this README grows with the client.
 
 ## Modules
 
 | Module | Purpose |
 |---|---|
 | `chord-protocol` | Wire primitives, packet models, revision registry, handshake codecs, state machine, exceptions. Zero dependencies. |
-| `chord-codec` | Native block codecs, the type system, compression. Placeholder until Phase 2. |
+| `chord-codec` | The recursive type model and parser, column codecs and native block decoding. Compression arrives in Phase 4. |
 | `chord-transport` | Blocking TCP and TLS transports behind an SPI. |
-| `chord-client` | The client API. Currently the low level `NativeConnection`. |
+| `chord-client` | The client API: `NativeConnection` with handshake, ping and streaming SELECT via `QueryRequest` and `QueryResult`. |
 | `chord-observability` | Micrometer, OpenTelemetry and JFR integrations. Placeholder until Phase 5. |
 | `chord-jdbc` | JDBC 4.3 adapter over the native client. Placeholder until Phase 7. |
 | `chord-testkit` | Testcontainers fixture for ClickHouse with native port access. |

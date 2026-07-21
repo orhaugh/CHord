@@ -8,6 +8,25 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ### Added
 
+- Streaming SELECT over the native protocol. `chord-codec` gains the sealed recursive type model
+  and type name parser (nested composites, quoted and escaped enum labels, named and back quoted
+  tuple elements, timezone and precision parameters, geometry aliases, configurable length and
+  depth limits, round trip property tested), primitive backed column implementations without per
+  cell allocation, and native block decoding with hostile input bounds for every Phase 2 type:
+  the integer families through 256 bits, floats, BFloat16, Bool, String, FixedString, Date,
+  Date32, DateTime, DateTime64 with timezone metadata, Interval, UUID, IPv4, IPv6, Enum8,
+  Enum16, the Decimal family, Nothing, Nullable, Array, Tuple, Map and SimpleAggregateFunction
+  aliases. Custom (sparse) serialisation, LowCardinality, Variant, Dynamic and JSON are rejected
+  explicitly before any value bytes are consumed, until Phase 6.
+- `chord-client`: `QueryRequest` (query id, string settings, server side parameters),
+  `NativeConnection.query()` and the pull based `QueryResult` streaming columnar blocks with
+  bounded memory, schema before rows, progress accumulation, ProfileInfo, Totals, Extremes,
+  server log consumption and TimezoneUpdate handling. Server exceptions before or during the
+  stream surface as typed exceptions and leave the connection reusable; abandoning a result
+  drains it on close so a connection is never reused out of sync. The Query packet ClientInfo is
+  byte level golden tested at revisions 54470 and 54488, and SELECT values are differentially
+  compared against clickhouse-client inside the test container.
+
 - `chord-transport`: TLS and mutual TLS for the native protocol. Hostname verification is always
   on (no disable switch, no trust-all option anywhere), SNI for hostnames, trust material from
   the system store, JKS or PKCS#12 files, PEM CA bundles or a custom `SSLContext`, client

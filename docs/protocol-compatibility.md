@@ -88,13 +88,13 @@ Client packets (`Protocol::Client`):
 | Code | Packet | Status |
 |---|---|---|
 | 0 | Hello | Implemented and tested |
-| 1 | Query | Planned, Phase 2 |
-| 2 | Data | Planned, Phase 2 (external tables) and 3 (INSERT) |
+| 1 | Query | Implemented and tested: query id, full ClientInfo at revision 54488, string settings, external roles placeholder, stage, compression flag, query text, parameters |
+| 2 | Data | Write: the empty external tables terminator after Query. Full INSERT blocks arrive in Phase 3 |
 | 3 | Cancel | Planned, Phase 5 |
 | 4 | Ping | Implemented and tested |
 | 5 | TablesStatusRequest | Planned, after Phase 5 |
 | 6 | KeepAlive | Not planned until a concrete need exists |
-| 7 | Scalar | Planned, Phase 2 |
+| 7 | Scalar | Not planned until scalar subqueries need client side data |
 | 8 | IgnoredPartUUIDs | Obsolete upstream; not planned |
 | 9 | ReadTaskResponse | Cluster function coordination; not planned |
 | 10 | MergeTreeReadTaskResponse | Parallel replicas coordination; not planned |
@@ -107,27 +107,40 @@ Server packets (`Protocol::Server`):
 | Code | Packet | Status |
 |---|---|---|
 | 0 | Hello | Implemented and tested |
-| 1 | Data | Planned, Phase 2 |
+| 1 | Data | Implemented and tested: uncompressed native blocks, all Phase 2 types, header and multi block streams |
 | 2 | Exception | Implemented and tested |
-| 3 | Progress | Implemented and tested (body decode; accumulation API in Phase 2) |
+| 3 | Progress | Implemented and tested, including accumulation on query results |
 | 4 | Pong | Implemented and tested |
-| 5 | EndOfStream | Planned, Phase 2 |
-| 6 | ProfileInfo | Planned, Phase 4 |
-| 7 | Totals | Planned, Phase 4 |
-| 8 | Extremes | Planned, Phase 4 |
+| 5 | EndOfStream | Implemented and tested |
+| 6 | ProfileInfo | Implemented and tested, including the rows before aggregation fields (54469) |
+| 7 | Totals | Implemented and tested |
+| 8 | Extremes | Implemented and tested |
 | 9 | TablesStatusResponse | Planned, after Phase 5 |
-| 10 | Log | Planned, Phase 4 |
+| 10 | Log | Implemented: consumed, bounded and logged (uncompressed streams; compressed variants arrive with Phase 4) |
 | 11 | TableColumns | Planned, Phase 3 |
 | 12 | PartUUIDs | Obsolete upstream; recognised, treated as a protocol error |
 | 13 | ReadTaskRequest | Recognised, treated as a protocol error (not an external client packet) |
-| 14 | ProfileEvents | Planned, Phase 4 |
+| 14 | ProfileEvents | Implemented: consumed and discarded; a typed accessor arrives in Phase 4 |
 | 15 | MergeTreeAllRangesAnnouncement | Recognised, treated as a protocol error (inter server) |
 | 16 | MergeTreeReadTaskRequest | Recognised, treated as a protocol error (inter server) |
-| 17 | TimezoneUpdate | Planned, Phase 3 |
+| 17 | TimezoneUpdate | Implemented and applied to the session timezone |
 | 18 | SSHChallenge | Planned with SSH authentication, after Phase 5 |
 
 Unknown packet identifiers are never skipped: the stream position after one is unknowable, so
 CHord raises `ChordProtocolException` and the connection is closed, never reused.
+
+## Query and block structures (implemented and tested)
+
+| Structure | Contents | Status |
+|---|---|---|
+| ClientInfo | every field to revision 54488, including quota key, distributed depth, OpenTelemetry flag, parallel replicas triple, script numbers, JWT flag, client agent, internal flag and current roles flag | Write: yes, byte level golden tests at revisions 54470 and 54488 |
+| BlockInfo | field framed metadata: overflow flag, bucket number, out of order buckets (54480), unknown fields poison the connection | Read and write: yes |
+| Native block | column and row counts, per column name, type name, custom serialisation flag (54454), column data | Read: yes for all Phase 2 types; custom or sparse serialisation is rejected explicitly until Phase 6. Write: empty blocks only until Phase 3 |
+| Query settings | STRINGS_WITH_FLAGS name and string value pairs, empty name terminated | Write: yes |
+| Query parameters | custom flagged settings entries carrying quoted field dumps (54459) | Write: yes |
+| ProfileInfo | rows, blocks, bytes, limit flags, rows before limit and aggregation (54469) | Read: yes |
+
+Type coverage is tracked per type in [type-support.md](type-support.md).
 
 ## Feature gate registry
 

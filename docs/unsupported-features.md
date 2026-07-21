@@ -14,18 +14,20 @@ ADR-0012. What remains from the Phase 1 authentication scope:
 |---|---|
 | Pluggable credential providers | Credential rotation on new connections |
 
-## Phase 2: uncompressed SELECT
+## Phase 2 remainder: SELECT conveniences
+
+Uncompressed streaming SELECT shipped: the Query packet with full ClientInfo, native block
+decoding for every Phase 2 type, the pull based streaming result with bounded memory, server
+side parameters, per query settings, totals, extremes, profile information and progress
+accumulation. What remains from the Phase 2 scope:
 
 | Feature | Notes |
 |---|---|
-| Query packet | Query id, ClientInfo, settings, parameters, execution stage |
-| Data packet decoding | Header and result blocks, BlockInfo, empty block semantics |
-| Core type codecs | See [type-support.md](type-support.md) for the full matrix |
-| Streaming columnar result API | Bounded memory, schema before rows, `Flow.Publisher` based streaming |
-| Progress accumulation, cancellation of result streams | Progress body decoding already exists |
-| External tables | Data packets alongside SELECT |
-| Named query parameters | Server side substitution (revision 54459) |
-| Scalar packets | Scalar subquery results |
+| `Flow.Publisher` streaming adapter | The pull based `QueryResult` is primary; the reactive adapter follows |
+| Row oriented convenience access | Columnar access is primary per ADR-0005 |
+| Non empty external tables | Sending data along with SELECT |
+| Time and Time64 | Recently introduced upstream; parser and codec land with Phase 3 |
+| Progress and log callbacks | Accessors exist; push callbacks arrive with the async API in Phase 5 |
 
 ## Phase 3: native INSERT
 
