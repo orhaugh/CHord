@@ -36,4 +36,14 @@
   <Match>
     <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION"/>
   </Match>
+
+  <!--
+    Testcontainers containers are stateful fixtures, not value objects; the
+    superclass equals is identity-like and adding configuration fields to a
+    container subclass does not create a meaningful equality contract to honour.
+  -->
+  <Match>
+    <Class name="io.github.orhaugh.chord.testkit.ClickHouseServerContainer"/>
+    <Bug pattern="EQ_DOESNT_OVERRIDE_EQUALS"/>
+  </Match>
 </FindBugsFilter>
