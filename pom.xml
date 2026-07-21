@@ -109,7 +109,7 @@
     <plugin.spotless.version>2.44.5</plugin.spotless.version>
     <googlejavaformat.version>1.27.0</googlejavaformat.version>
     <plugin.checkstyle.version>3.6.0</plugin.checkstyle.version>
-    <checkstyle.version>10.26.1</checkstyle.version>
+    <checkstyle.version>13.8.0</checkstyle.version>
     <plugin.spotbugs.version>4.10.3.0</plugin.spotbugs.version>
     <plugin.jacoco.version>0.8.13</plugin.jacoco.version>
     <plugin.cyclonedx.version>2.9.1</plugin.cyclonedx.version>
