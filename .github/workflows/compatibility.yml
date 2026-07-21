@@ -22,7 +22,7 @@ jobs:
           - clickhouse/clickhouse-server:26.6
           - clickhouse/clickhouse-server:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -39,7 +39,7 @@ jobs:
     # Unreleased upstream builds may break; failures here are signals, not blockers.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
