@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FindBugsFilter
+    xmlns="https://github.com/spotbugs/filter/3.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="https://github.com/spotbugs/filter/3.0.0 https://raw.githubusercontent.com/spotbugs/spotbugs/3.1.0/spotbugs/etc/findbugsfilter.xsd">
+
+  <!--
+    Keep this file short. Every entry must carry a justification comment and be
+    scoped as narrowly as possible. Blanket exclusions are not acceptable.
+  -->
+
+  <!--
+    CT_CONSTRUCTOR_THROW flags validating constructors as finalizer-attack
+    vectors. The JDK finalizer is deprecated for removal, none of these types
+    hold security-sensitive state before validation completes, and fail-fast
+    validation in constructors is a deliberate design rule of this codebase.
+  -->
+  <Match>
+    <Bug pattern="CT_CONSTRUCTOR_THROW"/>
+  </Match>
+
+  <!--
+    A transport's contract is to hand its I/O streams to the protocol layer, so
+    returning them is not an accidental exposure of internal state.
+  -->
+  <Match>
+    <Class name="~io\.github\.orhaugh\.chord\.transport\..*Transport"/>
+    <Bug pattern="EI_EXPOSE_REP"/>
+  </Match>
+
+  <!--
+    CHord's API contract is unchecked exceptions. The catch-cleanup-rethrow idiom
+    (mark the connection broken, close the transport, rethrow) necessarily catches
+    and rethrows RuntimeException; flagging every such site is noise.
+  -->
+  <Match>
+    <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION"/>
+  </Match>
+</FindBugsFilter>
