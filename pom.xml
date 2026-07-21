@@ -111,7 +111,7 @@
     <plugin.checkstyle.version>3.6.0</plugin.checkstyle.version>
     <checkstyle.version>10.26.1</checkstyle.version>
     <plugin.spotbugs.version>4.10.3.0</plugin.spotbugs.version>
-    <plugin.jacoco.version>0.8.13</plugin.jacoco.version>
+    <plugin.jacoco.version>0.8.15</plugin.jacoco.version>
     <plugin.cyclonedx.version>2.9.1</plugin.cyclonedx.version>
     <plugin.license.version>5.0.0</plugin.license.version>
     <plugin.japicmp.version>0.23.1</plugin.japicmp.version>
