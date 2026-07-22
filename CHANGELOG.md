@@ -8,6 +8,21 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ### Added
 
+- Native streaming INSERT. `chord-codec` gains `ColumnWriter` and full `BlockWriter` encoding
+  (every supported type round trips byte exactly through encode and decode) and the typed
+  `BlockBuilder`, which validates values losslessly at append time: range checked integers,
+  exact decimal rescaling, sub tick DateTime64 precision checks, zero padded but never truncated
+  FixedString, enum label validation, IPv4 mapping into IPv6 columns and recursive composites,
+  with row and column context on every failure.
+- `chord-client`: `NativeConnection.insert()` sends the Query with pending data, consumes
+  TableColumns defaults metadata and the server supplied schema header, and returns an
+  `InsertStream` for multi block streaming. `finish()` sends the terminal empty block, drains
+  Progress, Log and ProfileEvents to EndOfStream and reports written rows; closing without
+  finish hard aborts the connection so partially streamed data is never committed implicitly.
+  Server rejections before or at finish surface as typed exceptions and leave the connection
+  reusable. Verified against ClickHouse 25.8, 26.3 and 26.6, including constraint violations,
+  async insert settings and forwarding SELECT result blocks straight into an INSERT.
+
 - Streaming SELECT over the native protocol. `chord-codec` gains the sealed recursive type model
   and type name parser (nested composites, quoted and escaped enum labels, named and back quoted
   tuple elements, timezone and precision parameters, geometry aliases, configurable length and

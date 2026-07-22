@@ -29,16 +29,19 @@ accumulation. What remains from the Phase 2 scope:
 | Time and Time64 | Recently introduced upstream; parser and codec land with Phase 3 |
 | Progress and log callbacks | Accessors exist; push callbacks arrive with the async API in Phase 5 |
 
-## Phase 3: native INSERT
+## Phase 3 remainder: INSERT conveniences
+
+Schema driven streaming INSERT shipped: the pending data Query flow, TableColumns and schema
+negotiation, the typed BlockBuilder with lossless validation, multi block streaming with the
+terminal empty block, drain to EndOfStream, async insert settings and hard abort semantics for
+abandoned streams. What remains from the Phase 3 scope:
 
 | Feature | Notes |
 |---|---|
-| INSERT schema negotiation | Server supplied header block drives validation |
-| Block encoding and streaming, terminal empty block | |
-| Batch sizing, flush thresholds, backpressure | |
-| Asynchronous INSERT responses, deduplication tokens | |
-| TableColumns and TimezoneUpdate handling | |
-| Materialised and default column handling | |
+| Batch sizing by rows and estimated bytes, flush thresholds, backpressure helpers | Callers currently control block boundaries directly |
+| Explicit deduplication tokens | `insert_deduplication_token` can already be passed as a setting; a typed API arrives with retry classification in Phase 5 |
+| Iterable object mapping onto inserts | Row object convenience per ADR-0005 |
+| `input(...)` based streaming | |
 
 ## Phase 4: compression and advanced packets
 

@@ -24,7 +24,7 @@ protocol, implemented against the current ClickHouse sources and tested against 
 | Plaintext password protection (explicit opt in required) | Done |
 | TLS and mutual TLS: hostname verification always on, SNI, system/JKS/PKCS#12/PEM trust, PEM and key store client material, expiry diagnostics | Done, tested against local TLS servers and real ClickHouse |
 | Streaming SELECT: Query packet with full ClientInfo, native block decoding, typed columnar access, parameters, settings, totals, extremes, profile info, progress | Done, byte level and integration tested, values differentially checked against clickhouse-client |
-| Native INSERT streaming | Planned, Phase 3 |
+| Native INSERT streaming: server driven schema, typed block building, multi block streaming, defaults metadata, async insert settings, no implicit partial commits | Done, round trip and integration tested |
 | LZ4 and ZSTD compression, logs, profile events, chunked framing | Planned, Phase 4 |
 | Pooling, failover, retry classification, cancellation | Planned, Phase 5 |
 | LowCardinality, Variant, Dynamic, JSON serialisations | Planned, Phase 6 |
@@ -99,6 +99,25 @@ try (NativeConnection connection = NativeConnection.open(options)) {
 Blocks stream one at a time with bounded memory; the columnar accessors are the primary API and
 never allocate one object per cell on the main path.
 
+Inserts are schema driven: the server supplies the target structure, values are validated
+losslessly at append time, and nothing is committed until `finish()`:
+
+```java
+try (InsertStream insert = connection.insert(
+        QueryRequest.of("INSERT INTO telemetry (ts, sensor, value) VALUES"))) {
+    var builder = insert.newBlock(); // typed against the server supplied schema
+    builder.addRow(Instant.now().truncatedTo(ChronoUnit.SECONDS), "s-1", 21.5d);
+    builder.addRow(Instant.now().truncatedTo(ChronoUnit.SECONDS), "s-2", 19.0d);
+    insert.send(builder.build());
+    var summary = insert.finish(); // terminal empty block, drains to EndOfStream
+    System.out.println("wrote " + summary.progress().writtenRows() + " rows");
+}
+```
+
+Closing an insert without `finish()` hard aborts the connection instead of committing partial
+data, and failed inserts leave the connection reusable because a server exception is a defined
+stream terminator.
+
 The production path for password authentication is TLS; the default port becomes 9440 and
 hostname verification is always on:
 
@@ -142,9 +161,9 @@ A runnable version of this is in
 | Module | Purpose |
 |---|---|
 | `chord-protocol` | Wire primitives, packet models, revision registry, handshake codecs, state machine, exceptions. Zero dependencies. |
-| `chord-codec` | The recursive type model and parser, column codecs and native block decoding. Compression arrives in Phase 4. |
+| `chord-codec` | The recursive type model and parser, column codecs, native block decoding and encoding, and the typed `BlockBuilder`. Compression arrives in Phase 4. |
 | `chord-transport` | Blocking TCP and TLS transports behind an SPI. |
-| `chord-client` | The client API: `NativeConnection` with handshake, ping and streaming SELECT via `QueryRequest` and `QueryResult`. |
+| `chord-client` | The client API: `NativeConnection` with handshake, ping, streaming SELECT (`QueryResult`) and streaming INSERT (`InsertStream`). |
 | `chord-observability` | Micrometer, OpenTelemetry and JFR integrations. Placeholder until Phase 5. |
 | `chord-jdbc` | JDBC 4.3 adapter over the native client. Placeholder until Phase 7. |
 | `chord-testkit` | Testcontainers fixture for ClickHouse with native port access. |
