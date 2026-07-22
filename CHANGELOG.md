@@ -6,6 +6,11 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-22
+
+First public release: the native TCP protocol client and its JDBC adapter, tested against
+ClickHouse 25.8, 26.3 and 26.6.
+
 ### Added
 
 - Release readiness: `chord-bom` now lists every published module, including `chord-codec`,
