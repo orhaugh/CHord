@@ -15,6 +15,7 @@
  */
 package io.github.orhaugh.chord.jdbc;
 
+import io.github.orhaugh.chord.annotations.Experimental;
 import java.io.PrintWriter;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -30,6 +31,7 @@ import javax.sql.DataSource;
  * connection pool (HikariCP or similar), or use CHord's native {@code ConnectionPool} directly for
  * non JDBC callers.
  */
+@Experimental
 public final class ChordDataSource implements DataSource {
 
   private final ChordDriver driver = new ChordDriver();

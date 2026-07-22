@@ -57,7 +57,28 @@ protocol revision 54458 are refused explicitly. A protocol revision is not a ser
 
 ## Using it today
 
-Until the first Maven Central release, build and install locally:
+The first Maven Central release (0.1.0) ships under these coordinates, aligned by the BOM:
+
+```xml
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>io.github.orhaugh</groupId>
+      <artifactId>chord-bom</artifactId>
+      <version>0.1.0</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+
+<dependency>
+  <groupId>io.github.orhaugh</groupId>
+  <artifactId>chord-client</artifactId> <!-- or chord-jdbc for the JDBC driver -->
+</dependency>
+```
+
+Until that release lands in the portal, build and install locally:
 
 ```bash
 git clone https://github.com/orhaugh/CHord.git

@@ -8,6 +8,11 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ### Added
 
+- Release readiness: `chord-bom` now lists every published module, including `chord-codec`,
+  `chord-jdbc` and `chord-observability`, which shed their placeholder status in earlier
+  phases; the release build produces sources, javadoc jars and CycloneDX SBOMs for all of
+  them with reproducible timestamps.
+
 - The JDBC 4.3 adapter (`chord-jdbc`). `jdbc:chord://host[:port][,host2...][/db][?params]` URLs
   with strict parameter validation, service loader registration, and a plain `ChordDataSource`.
   Connections are honestly transaction free; statements support query timeouts (mapped to the

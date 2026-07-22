@@ -34,9 +34,8 @@
   <dependencyManagement>
     <dependencies>
       <!--
-        Only published modules appear here. chord-codec, chord-observability and
-        chord-jdbc join when they carry real code (Phases 2, 5 and 7); publishing
-        empty placeholder artifacts would pollute the coordinates.
+        Every published module appears here; chord-examples and chord-benchmarks are
+        never published.
       -->
       <dependency>
         <groupId>io.github.orhaugh</groupId>
@@ -50,7 +49,22 @@
       </dependency>
       <dependency>
         <groupId>io.github.orhaugh</groupId>
+        <artifactId>chord-codec</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.orhaugh</groupId>
         <artifactId>chord-client</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.orhaugh</groupId>
+        <artifactId>chord-jdbc</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.orhaugh</groupId>
+        <artifactId>chord-observability</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

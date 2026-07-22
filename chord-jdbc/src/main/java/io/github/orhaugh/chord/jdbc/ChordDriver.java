@@ -16,6 +16,7 @@
 package io.github.orhaugh.chord.jdbc;
 
 import io.github.orhaugh.chord.ChordException;
+import io.github.orhaugh.chord.annotations.Experimental;
 import io.github.orhaugh.chord.client.ConnectionOptions;
 import io.github.orhaugh.chord.client.Endpoint;
 import io.github.orhaugh.chord.client.FailoverConnector;
@@ -39,6 +40,7 @@ import java.util.logging.Logger;
  * parameters. The driver registers itself through the service loader, so {@code
  * DriverManager.getConnection} finds it without an explicit {@code Class.forName}.
  */
+@Experimental
 public final class ChordDriver implements Driver {
 
   private static final int MAJOR_VERSION = 0;
