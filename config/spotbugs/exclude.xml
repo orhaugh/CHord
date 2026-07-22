@@ -46,4 +46,23 @@
     <Class name="io.github.orhaugh.chord.testkit.ClickHouseServerContainer"/>
     <Bug pattern="EQ_DOESNT_OVERRIDE_EQUALS"/>
   </Match>
+
+  <!--
+    A lease's documented contract is to expose the underlying connection for its
+    duration; that is the feature, not an accidental representation leak.
+  -->
+  <Match>
+    <Class name="io.github.orhaugh.chord.client.PooledConnection"/>
+    <Method name="connection"/>
+    <Bug pattern="EI_EXPOSE_REP"/>
+  </Match>
+
+  <!--
+    JFR event fields are written by CHord and read reflectively by the Flight
+    Recorder runtime, so static analysis sees them as unread.
+  -->
+  <Match>
+    <Class name="~io\.github\.orhaugh\.chord\.client\.JfrEvents\$.*"/>
+    <Bug pattern="URF_UNREAD_FIELD"/>
+  </Match>
 </FindBugsFilter>

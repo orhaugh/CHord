@@ -283,6 +283,39 @@ class NativeConnectionTest {
     connection.close();
   }
 
+  @Test
+  void cancelSendsThePacketAndTheStreamConcludesReusable() {
+    // Server script: hello, header block for the query, then EndOfStream answering the cancel.
+    ScriptedTransport transport =
+        new ScriptedTransport(
+            script(
+                w -> {
+                  writeServerHello(w);
+                  w.writeVarUInt(1); // Server::Data, the header block
+                  w.writeString("");
+                  io.github.orhaugh.chord.codec.block.BlockWriter.write(
+                      w,
+                      io.github.orhaugh.chord.codec.column.BlockBuilder.forSchema(
+                              decodeSchema("n", "UInt8"))
+                          .build(),
+                      SERVER_REVISION);
+                  w.writeVarUInt(5); // EndOfStream
+                }));
+
+    NativeConnection connection = NativeConnection.open(options(), transport);
+    try (QueryResult result = connection.query(QueryRequest.of("SELECT n FROM t"))) {
+      result.cancel();
+      result.cancel(); // idempotent
+      assertThat(result.nextBlock()).isEmpty();
+    }
+    assertThat(connection.state()).isEqualTo(ConnectionState.READY);
+
+    // The last client byte before any further packets must be the Cancel packet id.
+    byte[] clientBytes = transport.clientBytes();
+    assertThat(clientBytes[clientBytes.length - 1]).isEqualTo((byte) 3);
+    connection.close();
+  }
+
   private static io.github.orhaugh.chord.codec.block.Block decodeSchema(String name, String type) {
     byte[] schemaBytes =
         script(

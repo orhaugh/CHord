@@ -8,6 +8,35 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ### Added
 
+- Connection pooling and failover. `ConnectionPool` leases connections with a hard size bound,
+  fair acquire with timeout, idle validation by protocol ping, maximum lifetime and idle
+  eviction, leak diagnostics carrying the acquire site stack trace, and graceful close; a lease
+  returned in any state other than READY is discarded, never reused. `FailoverConnector` opens
+  connections across multiple endpoints with in order, round robin and random policies,
+  exponential backoff with full jitter per endpoint, per attempt DNS resolution and a final
+  walk that retries backing off endpoints when nothing else is left; it plugs into the pool as
+  a connection factory. Neither the pool nor the connector ever retries an operation.
+- Retry classification: every `ChordException` reports a `RetryClass` (SAFE_TO_RETRY,
+  RETRY_ONLY_IF_IDEMPOTENT, OUTCOME_UNKNOWN, NOT_RETRYABLE) combining a conservative type
+  default, throw site knowledge of the exchange phase, and a small verified table of server
+  error codes; the first classification wins. CHord never retries automatically (ADR-0007,
+  ADR-0013).
+- Cancellation and deadlines. `QueryResult.cancel()` sends the Cancel packet (callable from
+  another thread); the stream concludes with EndOfStream on the server's terms and the
+  connection stays reusable after draining. `QueryRequest.timeout(...)` enforces a client side
+  deadline at packet boundaries by polling the transport (never by interrupting a read mid
+  value): on expiry the Cancel is sent, the connection's `cancelGrace` bounds the drain, and
+  the query fails with `ChordTimeoutException` whether or not the drain succeeded; an
+  unconcluded stream abandons the connection.
+- `QueryRequest.onProgress(...)` and `onLog(...)` listeners, invoked on the consuming thread
+  with per packet Progress deltas and typed `ServerLogEntry` rows; listener exceptions are
+  contained. `insertDeduplicationToken(...)` sets `insert_deduplication_token` for callers who
+  make retried inserts idempotent.
+- Observability: JDK Flight Recorder events under the CHord category (Connect, Query, Insert,
+  PoolAcquire) emitted by `chord-client` with no dependencies and no SQL text;
+  `chord-observability` ships its first real content, a Micrometer binder for pool gauges
+  (`chord.pool.connections.active`, `chord.pool.connections.idle`).
+
 - Native protocol compression. `chord-codec` gains the ClickHouse compressed frame codec:
   LZ4, LZ4HC, ZSTD and NONE methods, CityHash128 v1.0.2 checksums (a pure Java port of the
   exact historical version ClickHouse pins, cross validated against frames produced by

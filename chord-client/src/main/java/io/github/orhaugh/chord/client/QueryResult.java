@@ -90,6 +90,19 @@ public interface QueryResult extends AutoCloseable {
    */
   Optional<Block> extremes();
 
+  /**
+   * Requests cancellation of the running query: sends the Cancel packet and returns immediately.
+   *
+   * <p>The stream then concludes on the server's terms: packets already in flight, possibly
+   * including partial data, keep arriving until the server answers the cancel with EndOfStream (it
+   * sends no Exception packet for a client cancel). Keep consuming, or call {@link #close()} to
+   * drain; after a clean drain the connection is reusable. A no op once the stream has concluded.
+   *
+   * <p>This is the one method of a result that may be called from a different thread than the one
+   * consuming the stream, so timeout managers can cancel a blocked consumer.
+   */
+  void cancel();
+
   /** Closes the result, draining any remaining server packets so the connection can be reused. */
   @Override
   void close();

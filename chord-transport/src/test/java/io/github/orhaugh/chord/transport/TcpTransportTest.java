@@ -69,14 +69,52 @@ class TcpTransportTest {
   }
 
   @Test
-  void refusedConnectionRaisesTransportException() throws IOException {
-    int freePort;
+  void awaitReadableDeliversThePolledByteAsAShortReadWithoutBlocking() throws Exception {
     try (ServerSocket server = new ServerSocket(0)) {
-      freePort = server.getLocalPort();
+      executor.submit(
+          () -> {
+            try (Socket socket = server.accept()) {
+              socket.getOutputStream().write(5);
+              socket.getOutputStream().flush();
+              Thread.sleep(3000);
+            }
+            return null;
+          });
+      try (TcpTransport transport =
+          TcpTransport.connect("127.0.0.1", server.getLocalPort(), TransportOptions.DEFAULTS)) {
+        assertThat(transport.awaitReadable(2000)).isTrue();
+        // The polled byte was a complete message; a bulk read must deliver it alone as a
+        // short read instead of blocking on the socket for bytes that never come.
+        byte[] target = new byte[16];
+        long start = System.nanoTime();
+        int n = transport.inputStream().read(target, 0, target.length);
+        long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+        assertThat(n).isEqualTo(1);
+        assertThat(target[0]).isEqualTo((byte) 5);
+        assertThat(elapsedMillis).isLessThan(1000);
+        assertThat(transport.awaitReadable(50)).isFalse();
+      }
     }
-    assertThatThrownBy(() -> TcpTransport.connect("127.0.0.1", freePort, TransportOptions.DEFAULTS))
-        .isInstanceOf(ChordTransportException.class)
-        .hasMessageContaining("Failed to connect");
+  }
+
+  @Test
+  void refusedConnectionRaisesTransportException() throws IOException {
+    // A just released ephemeral port can be rebound by another process before the connect
+    // attempt, so retry with fresh ports until one refuses; a connect that succeeds by that
+    // race is discarded rather than failed.
+    for (int attempt = 0; attempt < 5; attempt++) {
+      int freePort;
+      try (ServerSocket server = new ServerSocket(0)) {
+        freePort = server.getLocalPort();
+      }
+      try {
+        TcpTransport.connect("127.0.0.1", freePort, TransportOptions.DEFAULTS).close();
+      } catch (ChordTransportException e) {
+        assertThat(e).hasMessageContaining("Failed to connect");
+        return;
+      }
+    }
+    throw new AssertionError("Every probed ephemeral port accepted a connection");
   }
 
   @Test

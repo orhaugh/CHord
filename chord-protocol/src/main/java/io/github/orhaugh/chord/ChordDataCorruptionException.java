@@ -26,6 +26,11 @@ public class ChordDataCorruptionException extends ChordException {
 
   private static final long serialVersionUID = 1L;
 
+  @Override
+  protected RetryClass defaultRetryClass() {
+    return RetryClass.OUTCOME_UNKNOWN;
+  }
+
   /**
    * Creates a data corruption exception.
    *

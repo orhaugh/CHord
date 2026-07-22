@@ -268,6 +268,17 @@ public final class WireReader {
   }
 
   /**
+   * Reports whether this reader holds already read bytes that have not been consumed. Used by
+   * deadline enforcement to decide whether a packet is pending without touching the underlying
+   * stream.
+   *
+   * @return {@code true} when buffered bytes are available
+   */
+  public boolean hasBufferedBytes() {
+    return limit - position > 0;
+  }
+
+  /**
    * Reads exactly {@code out.length} bytes into the supplied array.
    *
    * @param out destination array, filled completely

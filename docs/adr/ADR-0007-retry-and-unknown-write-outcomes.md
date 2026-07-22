@@ -1,6 +1,7 @@
 # ADR-0007: Retry and unknown write outcomes
 
-Status: Accepted (2026-07-21)
+Status: Accepted (2026-07-21), implemented in Phase 5 (2026-07-22) as `RetryClass` on every
+`ChordException`, with throw site refinement and the server code table; see also ADR-0013.
 
 ## Context
 

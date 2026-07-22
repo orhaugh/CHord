@@ -40,6 +40,17 @@ final class NativeQueryResult implements QueryResult {
   private final NativeConnection connection;
   private final WireReader in;
   private final String queryId;
+  private final java.util.function.Consumer<Progress> progressListener;
+  private final java.util.function.Consumer<ServerLogEntry> logListener;
+
+  /** Absolute expiry of the request's client side timeout, zero when none is set. */
+  private final long deadlineNanos;
+
+  /** Absolute expiry of the post cancel grace period, set when the deadline fires. */
+  private long graceDeadlineNanos;
+
+  /** Set when the request timeout fired; the stream is then drained and reported as timed out. */
+  private boolean deadlineExpired;
 
   private Block header;
   private Block pending;
@@ -59,10 +70,19 @@ final class NativeQueryResult implements QueryResult {
   private Block extremes;
   private int retainedLogBlocks;
 
-  NativeQueryResult(NativeConnection connection, WireReader in, String queryId) {
+  private final JfrEvents.QueryEvent jfrEvent = new JfrEvents.QueryEvent();
+  private boolean jfrCommitted;
+
+  NativeQueryResult(NativeConnection connection, WireReader in, QueryRequest request) {
     this.connection = connection;
     this.in = in;
-    this.queryId = queryId;
+    this.queryId = request.queryId();
+    this.progressListener = request.progressListener().orElse(null);
+    this.logListener = request.logListener().orElse(null);
+    java.time.Duration timeout = request.timeout().orElse(null);
+    this.deadlineNanos = timeout == null ? 0 : System.nanoTime() + timeout.toNanos();
+    jfrEvent.begin();
+    jfrEvent.queryId = queryId;
     // Pull packets until the first data block (the header) or stream conclusion, so the schema
     // is available before any row consumption.
     Block first = pumpUntilData();
@@ -173,14 +193,23 @@ final class NativeQueryResult implements QueryResult {
     }
     try {
       while (true) {
+        awaitNextPacketWithinDeadline();
         long code = in.readVarUInt();
         ServerPacketType packet = ServerPacketType.fromCode(code);
         switch (packet) {
           case DATA -> {
             in.readString(); // external table name, empty for the main stream
-            return BlockReader.read(connection.dataBodyReader(), decodeContext());
+            Block block = BlockReader.read(connection.dataBodyReader(), decodeContext());
+            if (!deadlineExpired) {
+              return block;
+            }
+            // Past the deadline the stream is only drained; late data is discarded.
           }
-          case PROGRESS -> accumulate(Progress.read(in, connection.negotiatedRevision()));
+          case PROGRESS -> {
+            Progress delta = Progress.read(in, connection.negotiatedRevision());
+            accumulate(delta);
+            notifyProgress(delta);
+          }
           case PROFILE_INFO -> profileInfo = ProfileInfo.read(in, connection.negotiatedRevision());
           case TOTALS -> {
             in.readString();
@@ -201,6 +230,7 @@ final class NativeQueryResult implements QueryResult {
                   queryId,
                   logBlock.rows());
             }
+            notifyLogs(logBlock);
           }
           case PROFILE_EVENTS -> {
             in.readString();
@@ -211,6 +241,18 @@ final class NativeQueryResult implements QueryResult {
           case END_OF_STREAM -> {
             finished = true;
             connection.finishResponse();
+            if (deadlineExpired) {
+              commitJfr("cancelled_timeout");
+              // The cancel was answered within the grace period, so the connection is in
+              // sync and reusable, but the caller must see the timeout: a truncated stream
+              // must never look like a legitimately short result.
+              throw new io.github.orhaugh.chord.ChordTimeoutException(
+                  "Query "
+                      + queryId
+                      + " exceeded its timeout; it was cancelled and the stream drained, and"
+                      + " the connection remains usable");
+            }
+            commitJfr("finished");
             return null;
           }
           case EXCEPTION -> {
@@ -219,6 +261,7 @@ final class NativeQueryResult implements QueryResult {
             finished = true;
             ChordException failure = ServerError.read(in).toException();
             connection.finishResponse();
+            commitJfr("server_error");
             throw failure;
           }
           default ->
@@ -233,14 +276,104 @@ final class NativeQueryResult implements QueryResult {
         | io.github.orhaugh.chord.ChordTimeoutException
         | io.github.orhaugh.chord.ChordTypeException e) {
       finished = true;
-      connection.markBrokenPublic();
+      // A timeout whose cancel drained cleanly has already returned the connection to READY
+      // and left it in protocol sync; every other failure here poisons the connection.
+      if (connection.state() != io.github.orhaugh.chord.protocol.state.ConnectionState.READY) {
+        connection.markBrokenPublic();
+      }
+      // The query was executing when the stream failed or timed out.
+      NativeConnection.classifyIfTransportLevel(
+          e, io.github.orhaugh.chord.RetryClass.RETRY_ONLY_IF_IDEMPOTENT);
+      commitJfr("failed");
       throw e;
     }
+  }
+
+  /** Concludes the JFR event exactly once, with final progress counters. */
+  private void commitJfr(String outcome) {
+    if (jfrCommitted) {
+      return;
+    }
+    jfrCommitted = true;
+    jfrEvent.rowsRead = progressReadRows;
+    jfrEvent.bytesRead = progressReadBytes;
+    jfrEvent.outcome = outcome;
+    jfrEvent.commit();
+  }
+
+  /**
+   * Enforces the request timeout at packet boundaries, where waiting consumes nothing: while the
+   * deadline holds, wait for the next packet; when it expires, send Cancel once and allow the
+   * connection's grace period for the server to conclude the stream. A grace expiry abandons the
+   * connection, because a stream that never concludes cannot be drained for reuse.
+   */
+  private void awaitNextPacketWithinDeadline() {
+    if (deadlineNanos == 0) {
+      return;
+    }
+    long remainingMillis = (deadlineNanos - System.nanoTime()) / 1_000_000;
+    if (remainingMillis > 0 && connection.awaitResponseReadable(remainingMillis)) {
+      return;
+    }
+    deadlineExpired = true;
+    if (graceDeadlineNanos == 0) {
+      // Whether this deadline sends the cancel or a manual cancel() already did, the grace
+      // clock for concluding the stream starts at the first expiry.
+      graceDeadlineNanos = System.nanoTime() + connection.cancelGraceMillis() * 1_000_000;
+      if (connection.requestCancel()) {
+        LOG.debug("query {} exceeded its timeout; cancel sent", queryId);
+      }
+    }
+    long graceRemainingMillis = (graceDeadlineNanos - System.nanoTime()) / 1_000_000;
+    if (graceRemainingMillis > 0 && connection.awaitResponseReadable(graceRemainingMillis)) {
+      return;
+    }
+    finished = true;
+    connection.markBrokenPublic();
+    connection.close();
+    throw new io.github.orhaugh.chord.ChordTimeoutException(
+        "Query "
+            + queryId
+            + " exceeded its timeout and the server did not conclude the stream within the"
+            + " cancel grace period; the connection is closed");
+  }
+
+  @Override
+  public void cancel() {
+    // The connection owns the once-per-exchange gate and the send serialisation, keeping this
+    // result single threaded; finished or closed streams are covered by the connection no
+    // longer being in the reading state.
+    connection.requestCancel();
   }
 
   private DecodeContext decodeContext() {
     return new DecodeContext(
         connection.blockLimits(), connection.negotiatedRevision(), connection.sessionTimezone());
+  }
+
+  /** Listener failures are contained: a callback bug must never desynchronise the stream. */
+  private void notifyProgress(Progress delta) {
+    if (progressListener == null) {
+      return;
+    }
+    try {
+      progressListener.accept(delta);
+    } catch (RuntimeException e) {
+      LOG.warn("query {} progress listener failed", queryId, e);
+    }
+  }
+
+  private void notifyLogs(Block logBlock) {
+    if (logListener == null) {
+      return;
+    }
+    try {
+      for (ServerLogEntry entry : ServerLogEntry.fromBlock(logBlock)) {
+        logListener.accept(entry);
+      }
+    } catch (RuntimeException e) {
+      LOG.warn("query {} log listener failed", queryId, e);
+    }
   }
 
   private void accumulate(Progress delta) {
@@ -275,6 +408,7 @@ final class NativeQueryResult implements QueryResult {
     closed = true;
     pending = null;
     if (finished) {
+      commitJfr("finished");
       return;
     }
     // Drain the rest of the response so the connection is provably in sync before reuse.

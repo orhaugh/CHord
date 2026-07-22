@@ -59,6 +59,28 @@ public class ChordServerException extends ChordException {
   }
 
   /**
+   * Classifies by the server error code, from {@code src/Common/ErrorCodes.cpp}. The table is
+   * deliberately small and conservative: admission control rejections are safe to retry because
+   * nothing executed; transient resource conditions may have interrupted execution mid way, so they
+   * retry only for idempotent statements; {@code UNKNOWN_STATUS_OF_INSERT} is the server itself
+   * declaring the outcome unknowable; everything else is a deterministic error.
+   */
+  @Override
+  protected RetryClass defaultRetryClass() {
+    return switch (code) {
+      // 202 TOO_MANY_SIMULTANEOUS_QUERIES, 203 NO_FREE_CONNECTION: rejected at admission.
+      case 202, 203 -> RetryClass.SAFE_TO_RETRY;
+      // 159 TIMEOUT_EXCEEDED, 209 SOCKET_TIMEOUT, 210 NETWORK_ERROR, 241 MEMORY_LIMIT_EXCEEDED,
+      // 242 TABLE_IS_READ_ONLY, 252 TOO_MANY_PARTS, 285 TOO_FEW_LIVE_REPLICAS: transient
+      // conditions, but execution may already have begun when they struck.
+      case 159, 209, 210, 241, 242, 252, 285 -> RetryClass.RETRY_ONLY_IF_IDEMPOTENT;
+      // 319 UNKNOWN_STATUS_OF_INSERT: the server declares the outcome unknowable.
+      case 319 -> RetryClass.OUTCOME_UNKNOWN;
+      default -> RetryClass.NOT_RETRYABLE;
+    };
+  }
+
+  /**
    * Returns the ClickHouse numeric error code, for example {@code 81} for {@code UNKNOWN_DATABASE}.
    *
    * @return the numeric error code

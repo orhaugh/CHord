@@ -37,15 +37,21 @@ import java.net.SocketTimeoutException;
 public final class TcpTransport implements NativeTransport {
 
   private final Socket socket;
-  private final InputStream in;
+  private final PollBufferInputStream in;
   private final OutputStream out;
   private final InetSocketAddress address;
+  private final int configuredReadTimeoutMillis;
 
-  private TcpTransport(Socket socket, InetSocketAddress address, InputStream in, OutputStream out) {
+  private TcpTransport(
+      Socket socket, InetSocketAddress address, TransportOptions options, OutputStream out)
+      throws IOException {
     this.socket = socket;
     this.address = address;
-    this.in = in;
+    // The poll buffer exists for awaitReadable: a polled byte is stored so the poll consumes
+    // nothing observable.
+    this.in = new PollBufferInputStream(socket.getInputStream());
     this.out = out;
+    this.configuredReadTimeoutMillis = (int) options.readTimeout().toMillis();
   }
 
   /**
@@ -60,7 +66,7 @@ public final class TcpTransport implements NativeTransport {
     InetSocketAddress address = new InetSocketAddress(host, port);
     Socket socket = dial(address, options);
     try {
-      return new TcpTransport(socket, address, socket.getInputStream(), socket.getOutputStream());
+      return new TcpTransport(socket, address, options, socket.getOutputStream());
     } catch (IOException e) {
       closeQuietly(socket);
       throw new ChordTransportException("Failed to open streams to " + address, e);
@@ -121,6 +127,39 @@ public final class TcpTransport implements NativeTransport {
   @Override
   public boolean isSecure() {
     return false;
+  }
+
+  @Override
+  public boolean awaitReadable(int timeoutMillis) {
+    return pollReadable(socket, in, configuredReadTimeoutMillis, timeoutMillis);
+  }
+
+  /**
+   * Polls for a readable byte by reading one under a temporary {@code SO_TIMEOUT} and storing it in
+   * the poll buffer. A {@link SocketTimeoutException} guarantees nothing was consumed, so the poll
+   * never disturbs the stream position. Shared with {@link TlsTransport}.
+   */
+  static boolean pollReadable(
+      Socket socket, PollBufferInputStream in, int configuredReadTimeoutMillis, int timeoutMillis) {
+    try {
+      socket.setSoTimeout(Math.max(1, timeoutMillis));
+      int b = in.read();
+      if (b >= 0) {
+        in.storePolledByte(b);
+      }
+      // A byte or a clean end of stream: either way the next read resolves immediately.
+      return true;
+    } catch (SocketTimeoutException e) {
+      return false;
+    } catch (IOException e) {
+      throw new ChordTransportException("I/O failure while waiting for server data", e);
+    } finally {
+      try {
+        socket.setSoTimeout(configuredReadTimeoutMillis);
+      } catch (IOException e) {
+        // The socket is closing; the pending read will surface the real failure.
+      }
+    }
   }
 
   @Override

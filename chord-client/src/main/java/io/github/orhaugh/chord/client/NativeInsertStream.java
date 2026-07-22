@@ -41,6 +41,8 @@ final class NativeInsertStream implements InsertStream {
   private final WireReader in;
   private final WireWriter out;
   private final String queryId;
+  private final java.util.function.Consumer<Progress> progressListener;
+  private final java.util.function.Consumer<ServerLogEntry> logListener;
 
   private Block schema;
   private String tableColumnsDescription;
@@ -55,12 +57,32 @@ final class NativeInsertStream implements InsertStream {
   private long progressWrittenBytes;
   private long progressElapsedNanos;
 
-  NativeInsertStream(NativeConnection connection, WireReader in, WireWriter out, String queryId) {
+  private final JfrEvents.InsertEvent jfrEvent = new JfrEvents.InsertEvent();
+  private boolean jfrCommitted;
+
+  NativeInsertStream(
+      NativeConnection connection, WireReader in, WireWriter out, QueryRequest request) {
     this.connection = connection;
     this.in = in;
     this.out = out;
-    this.queryId = queryId;
+    this.queryId = request.queryId();
+    this.progressListener = request.progressListener().orElse(null);
+    this.logListener = request.logListener().orElse(null);
+    jfrEvent.begin();
+    jfrEvent.queryId = queryId;
     readSchema();
+  }
+
+  /** Concludes the JFR event exactly once, with final send counters. */
+  private void commitJfr(String outcome) {
+    if (jfrCommitted) {
+      return;
+    }
+    jfrCommitted = true;
+    jfrEvent.rowsSent = rowsSent;
+    jfrEvent.blocksSent = blocksSent;
+    jfrEvent.outcome = outcome;
+    jfrEvent.commit();
   }
 
   /**
@@ -87,9 +109,13 @@ final class NativeInsertStream implements InsertStream {
           }
           case LOG -> {
             in.readString();
-            BlockReader.read(connection.auxiliaryBodyReader(), decodeContext());
+            notifyLogs(BlockReader.read(connection.auxiliaryBodyReader(), decodeContext()));
           }
-          case PROGRESS -> accumulate(Progress.read(in, connection.negotiatedRevision()));
+          case PROGRESS -> {
+            Progress delta = Progress.read(in, connection.negotiatedRevision());
+            accumulate(delta);
+            notifyProgress(delta);
+          }
           case TIMEZONE_UPDATE -> connection.updateSessionTimezone(in.readString());
           case EXCEPTION -> {
             finished = true;
@@ -182,13 +208,20 @@ final class NativeInsertStream implements InsertStream {
           queryId,
           rowsSent,
           blocksSent);
+      commitJfr("committed");
       return new InsertSummary(rowsSent, blocksSent, currentProgress());
+    } catch (io.github.orhaugh.chord.ChordServerException e) {
+      finished = true;
+      commitJfr("server_error");
+      throw e;
     } catch (ChordException e) {
       finished = true;
+      commitJfr("failed");
       throw e;
     } catch (RuntimeException e) {
       finished = true;
       connection.markBrokenPublic();
+      commitJfr("failed");
       throw e;
     }
   }
@@ -199,8 +232,16 @@ final class NativeInsertStream implements InsertStream {
         long code = in.readVarUInt();
         ServerPacketType packet = ServerPacketType.fromCode(code);
         switch (packet) {
-          case PROGRESS -> accumulate(Progress.read(in, connection.negotiatedRevision()));
-          case LOG, PROFILE_EVENTS -> {
+          case PROGRESS -> {
+            Progress delta = Progress.read(in, connection.negotiatedRevision());
+            accumulate(delta);
+            notifyProgress(delta);
+          }
+          case LOG -> {
+            in.readString();
+            notifyLogs(BlockReader.read(connection.auxiliaryBodyReader(), decodeContext()));
+          }
+          case PROFILE_EVENTS -> {
             in.readString();
             BlockReader.read(connection.auxiliaryBodyReader(), decodeContext());
           }
@@ -233,6 +274,31 @@ final class NativeInsertStream implements InsertStream {
   private DecodeContext decodeContext() {
     return new DecodeContext(
         connection.blockLimits(), connection.negotiatedRevision(), connection.sessionTimezone());
+  }
+
+  /** Listener failures are contained: a callback bug must never desynchronise the stream. */
+  private void notifyProgress(Progress delta) {
+    if (progressListener == null) {
+      return;
+    }
+    try {
+      progressListener.accept(delta);
+    } catch (RuntimeException e) {
+      LOG.warn("insert {} progress listener failed", queryId, e);
+    }
+  }
+
+  private void notifyLogs(Block logBlock) {
+    if (logListener == null) {
+      return;
+    }
+    try {
+      for (ServerLogEntry entry : ServerLogEntry.fromBlock(logBlock)) {
+        logListener.accept(entry);
+      }
+    } catch (RuntimeException e) {
+      LOG.warn("insert {} log listener failed", queryId, e);
+    }
   }
 
   private void accumulate(Progress delta) {
@@ -282,5 +348,6 @@ final class NativeInsertStream implements InsertStream {
         queryId,
         rowsSent);
     connection.close();
+    commitJfr("aborted");
   }
 }

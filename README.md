@@ -28,7 +28,12 @@ protocol, implemented against the current ClickHouse sources and tested against 
 | Compression (LZ4, LZ4HC, ZSTD) with checksum validation and bomb limits, per connection or per query | Done, golden and integration tested against real servers |
 | Chunked packet framing in both directions, including strict `proto_caps` servers | Done, byte level and integration tested |
 | Server logs and typed profile event counters, raw and compressed | Done, integration tested |
-| Pooling, failover, retry classification, cancellation | Planned, Phase 5 |
+| Connection pool: validation by ping, lifetime and idle eviction, leak diagnostics | Done, tested against loopback and real servers |
+| Multi endpoint failover: policies, health backoff with jitter, per attempt DNS resolution | Done, tested |
+| Retry classification on every exception; never an automatic retry | Done, tested; see ADR-0007 and ADR-0013 |
+| Cancel packet, per request timeouts, cancellation draining, cancel grace | Done, integration tested |
+| Progress and server log listeners, insert deduplication token | Done, integration tested |
+| JFR events (Connect, Query, Insert, PoolAcquire) and Micrometer pool gauges | Done |
 | LowCardinality, Variant, Dynamic, JSON serialisations | Planned, Phase 6 |
 | JDBC adapter | Planned, Phase 7 |
 
@@ -166,7 +171,7 @@ A runnable version of this is in
 | `chord-codec` | The recursive type model and parser, column codecs, native block decoding and encoding, the typed `BlockBuilder`, and the compressed frame codec with CityHash 1.0.2 checksums. |
 | `chord-transport` | Blocking TCP and TLS transports behind an SPI. |
 | `chord-client` | The client API: `NativeConnection` with handshake, ping, streaming SELECT (`QueryResult`) and streaming INSERT (`InsertStream`). |
-| `chord-observability` | Micrometer, OpenTelemetry and JFR integrations. Placeholder until Phase 5. |
+| `chord-observability` | The Micrometer binding for pool metrics. Per operation timing is emitted as JFR events by `chord-client` itself; OpenTelemetry is reachable through Micrometer registry bridges. |
 | `chord-jdbc` | JDBC 4.3 adapter over the native client. Placeholder until Phase 7. |
 | `chord-testkit` | Testcontainers fixture for ClickHouse with native port access. |
 | `chord-examples` | Runnable examples. Not published. |

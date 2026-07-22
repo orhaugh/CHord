@@ -39,6 +39,10 @@ public final class QueryRequest {
   private final Map<String, String> settings;
   private final Map<String, String> parameters;
   private final Compression compression;
+  private final java.time.Duration timeout;
+  private final java.util.function.Consumer<io.github.orhaugh.chord.protocol.Progress>
+      progressListener;
+  private final java.util.function.Consumer<ServerLogEntry> logListener;
 
   private QueryRequest(Builder builder) {
     this.query = builder.query;
@@ -46,6 +50,9 @@ public final class QueryRequest {
     this.settings = Map.copyOf(builder.settings);
     this.parameters = Map.copyOf(builder.parameters);
     this.compression = builder.compression;
+    this.timeout = builder.timeout;
+    this.progressListener = builder.progressListener;
+    this.logListener = builder.logListener;
   }
 
   /**
@@ -113,6 +120,34 @@ public final class QueryRequest {
     return java.util.Optional.ofNullable(compression);
   }
 
+  /**
+   * Returns the client side execution timeout for the whole result stream, empty for none.
+   *
+   * @return the timeout
+   */
+  public java.util.Optional<java.time.Duration> timeout() {
+    return java.util.Optional.ofNullable(timeout);
+  }
+
+  /**
+   * Returns the progress listener, empty for none.
+   *
+   * @return the progress listener
+   */
+  public java.util.Optional<java.util.function.Consumer<io.github.orhaugh.chord.protocol.Progress>>
+      progressListener() {
+    return java.util.Optional.ofNullable(progressListener);
+  }
+
+  /**
+   * Returns the server log listener, empty for none.
+   *
+   * @return the log listener
+   */
+  public java.util.Optional<java.util.function.Consumer<ServerLogEntry>> logListener() {
+    return java.util.Optional.ofNullable(logListener);
+  }
+
   @Override
   public String toString() {
     // Query text can carry sensitive literals; never include it here.
@@ -127,6 +162,9 @@ public final class QueryRequest {
     private final Map<String, String> settings = new LinkedHashMap<>();
     private final Map<String, String> parameters = new LinkedHashMap<>();
     private Compression compression;
+    private java.time.Duration timeout;
+    private java.util.function.Consumer<io.github.orhaugh.chord.protocol.Progress> progressListener;
+    private java.util.function.Consumer<ServerLogEntry> logListener;
 
     private Builder(String query) {
       this.query = Objects.requireNonNull(query, "query");
@@ -183,6 +221,72 @@ public final class QueryRequest {
     public Builder compression(Compression compression) {
       this.compression = Objects.requireNonNull(compression, "compression");
       return this;
+    }
+
+    /**
+     * Sets a client side execution timeout covering the whole result stream. When it expires at a
+     * packet boundary, CHord sends the Cancel packet and drains the concluding response within the
+     * connection's cancel grace period, leaving the connection reusable; if the server does not
+     * conclude in time, or the expiry falls in the middle of a packet, the connection is closed as
+     * broken. Either way the read fails with {@link io.github.orhaugh.chord.ChordTimeoutException}.
+     *
+     * <p>This is a wall clock bound on the client side; pair it with the server's {@code
+     * max_execution_time} setting to also bound work the server performs.
+     *
+     * @param timeout the timeout, positive
+     * @return this builder
+     */
+    public Builder timeout(java.time.Duration timeout) {
+      Objects.requireNonNull(timeout, "timeout");
+      if (timeout.isZero() || timeout.isNegative()) {
+        throw new ChordConfigurationException("timeout must be positive");
+      }
+      this.timeout = timeout;
+      return this;
+    }
+
+    /**
+     * Registers a listener invoked for every Progress packet of this request, on the thread
+     * consuming the stream, with the delta the packet carried. Accumulated totals stay available
+     * through {@link QueryResult#totalProgress()}. Listener exceptions are logged and swallowed;
+     * they never affect the stream.
+     *
+     * @param listener the progress consumer
+     * @return this builder
+     */
+    public Builder onProgress(
+        java.util.function.Consumer<io.github.orhaugh.chord.protocol.Progress> listener) {
+      this.progressListener = Objects.requireNonNull(listener, "listener");
+      return this;
+    }
+
+    /**
+     * Registers a listener invoked for every server log line of this request, on the thread
+     * consuming the stream. Log packets only arrive when the {@code send_logs_level} setting asks
+     * for them. Listener exceptions are logged and swallowed; they never affect the stream.
+     *
+     * @param listener the log entry consumer
+     * @return this builder
+     */
+    public Builder onLog(java.util.function.Consumer<ServerLogEntry> listener) {
+      this.logListener = Objects.requireNonNull(listener, "listener");
+      return this;
+    }
+
+    /**
+     * Sets the {@code insert_deduplication_token} setting: replicated and shared tables drop an
+     * INSERT carrying a token they have already applied, making a retried INSERT safe. Retrying
+     * remains the caller's decision; see {@link io.github.orhaugh.chord.RetryClass}.
+     *
+     * @param token the idempotency token, non blank
+     * @return this builder
+     */
+    public Builder insertDeduplicationToken(String token) {
+      Objects.requireNonNull(token, "token");
+      if (token.isBlank()) {
+        throw new ChordConfigurationException("insertDeduplicationToken must not be blank");
+      }
+      return setting("insert_deduplication_token", token);
     }
 
     /**

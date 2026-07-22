@@ -17,6 +17,7 @@ package io.github.orhaugh.chord.client;
 
 import io.github.orhaugh.chord.ChordConfigurationException;
 import io.github.orhaugh.chord.ChordProtocolException;
+import io.github.orhaugh.chord.RetryClass;
 import io.github.orhaugh.chord.annotations.Experimental;
 import io.github.orhaugh.chord.codec.block.BlockLimits;
 import io.github.orhaugh.chord.codec.block.BlockWriter;
@@ -45,6 +46,7 @@ import io.github.orhaugh.chord.transport.TlsTransport;
 import java.net.InetAddress;
 import java.net.SocketAddress;
 import java.time.ZoneId;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,12 +78,15 @@ public final class NativeConnection implements AutoCloseable {
   private final long id;
   private final NativeTransport transport;
   private final WireReader in;
+  private final WireReader rawIn;
   private final WireWriter out;
   private final ServerHello serverHello;
   private final long negotiatedRevision;
   private final ConnectionStateMachine state;
   private final ConnectionOptions options;
   private final ChunkedOutputStream chunkedOut;
+  private final Object sendLock = new Object();
+  private final AtomicBoolean cancelRequested = new AtomicBoolean();
   private volatile ZoneId sessionTimezone;
   private WireReader compressedReader;
   private ActiveCompression activeCompression;
@@ -94,6 +99,7 @@ public final class NativeConnection implements AutoCloseable {
       long id,
       NativeTransport transport,
       WireReader in,
+      WireReader rawIn,
       WireWriter out,
       ServerHello serverHello,
       long negotiatedRevision,
@@ -103,6 +109,7 @@ public final class NativeConnection implements AutoCloseable {
     this.id = id;
     this.transport = transport;
     this.in = in;
+    this.rawIn = rawIn;
     this.out = out;
     this.serverHello = serverHello;
     this.negotiatedRevision = negotiatedRevision;
@@ -131,13 +138,20 @@ public final class NativeConnection implements AutoCloseable {
    */
   public static NativeConnection open(ConnectionOptions options) {
     NativeTransport transport;
-    if (options.tls().isPresent()) {
-      transport =
-          TlsTransport.connect(
-              options.host(), options.port(), options.transportOptions(), options.tls().get());
-    } else {
-      requirePlaintextPasswordOptIn(options, false);
-      transport = TcpTransport.connect(options.host(), options.port(), options.transportOptions());
+    try {
+      if (options.tls().isPresent()) {
+        transport =
+            TlsTransport.connect(
+                options.host(), options.port(), options.transportOptions(), options.tls().get());
+      } else {
+        requirePlaintextPasswordOptIn(options, false);
+        transport =
+            TcpTransport.connect(options.host(), options.port(), options.transportOptions());
+      }
+    } catch (RuntimeException e) {
+      // Nothing reached the server; retrying a failed connect cannot duplicate work.
+      classifyIfTransportLevel(e, RetryClass.SAFE_TO_RETRY);
+      throw e;
     }
     return open(options, transport);
   }
@@ -148,6 +162,22 @@ public final class NativeConnection implements AutoCloseable {
    * handshake failure.
    */
   static NativeConnection open(ConnectionOptions options, NativeTransport transport) {
+    JfrEvents.ConnectEvent event = new JfrEvents.ConnectEvent();
+    event.begin();
+    event.host = options.host();
+    event.port = options.port();
+    event.secure = transport.isSecure();
+    try {
+      NativeConnection connection = handshake(options, transport);
+      event.negotiatedRevision = connection.negotiatedRevision();
+      event.succeeded = true;
+      return connection;
+    } finally {
+      event.commit();
+    }
+  }
+
+  private static NativeConnection handshake(ConnectionOptions options, NativeTransport transport) {
     long id = IDS.incrementAndGet();
     ConnectionStateMachine state = new ConnectionStateMachine();
     char[] password = options.passwordChars();
@@ -192,6 +222,7 @@ public final class NativeConnection implements AutoCloseable {
         chunkedOut = new ChunkedOutputStream(transport.outputStream());
         out = new WireWriter(chunkedOut);
       }
+      WireReader rawIn = in;
       if (receiveChunked) {
         // Layer over the handshake reader, not the raw stream: its buffer may already hold
         // bytes that belong to the chunked stream.
@@ -200,7 +231,7 @@ public final class NativeConnection implements AutoCloseable {
 
       NativeConnection connection =
           new NativeConnection(
-              id, transport, in, out, serverHello, negotiated, state, options, chunkedOut);
+              id, transport, in, rawIn, out, serverHello, negotiated, state, options, chunkedOut);
       state.transitionTo(ConnectionState.READY);
       LOG.debug(
           "connection {} established to {} ({} {} revision {}, negotiated {})",
@@ -217,10 +248,27 @@ public final class NativeConnection implements AutoCloseable {
       } else if (state.state() == ConnectionState.NEW) {
         state.transitionTo(ConnectionState.CLOSED);
       }
+      // A handshake that never completed executed nothing; server rejections such as
+      // authentication failures keep their own classification.
+      classifyIfTransportLevel(e, RetryClass.SAFE_TO_RETRY);
       transport.close();
       throw e;
     } finally {
       ConnectionOptions.wipe(password);
+    }
+  }
+
+  /**
+   * Stamps a retry classification on transport level failures: transport, timeout, protocol and
+   * data corruption exceptions, whose meaning depends on the phase of the exchange. Server reported
+   * and client local errors keep their own classification.
+   */
+  static void classifyIfTransportLevel(RuntimeException e, RetryClass classification) {
+    if (e instanceof io.github.orhaugh.chord.ChordTransportException
+        || e instanceof io.github.orhaugh.chord.ChordTimeoutException
+        || e instanceof ChordProtocolException
+        || e instanceof io.github.orhaugh.chord.ChordDataCorruptionException) {
+      ((io.github.orhaugh.chord.ChordException) e).classifiedAs(classification);
     }
   }
 
@@ -366,7 +414,7 @@ public final class NativeConnection implements AutoCloseable {
       out.flush();
       state.transitionTo(ConnectionState.READING_RESPONSE);
       LOG.debug("connection {} query {} sent", id, request.queryId());
-      return new NativeQueryResult(this, in, request.queryId());
+      return new NativeQueryResult(this, in, request);
     } catch (RuntimeException e) {
       // A server Exception packet received while priming the result concludes the stream
       // cleanly and has already returned the connection to READY; only failures that leave
@@ -375,6 +423,8 @@ public final class NativeConnection implements AutoCloseable {
       if (current == ConnectionState.WRITING_QUERY || current == ConnectionState.READING_RESPONSE) {
         markBroken();
       }
+      // The query may have begun executing before the failure.
+      classifyIfTransportLevel(e, RetryClass.RETRY_ONLY_IF_IDEMPOTENT);
       throw e;
     }
   }
@@ -404,6 +454,7 @@ public final class NativeConnection implements AutoCloseable {
             : options.compressionLevel();
     activeCompression = method == null ? null : new ActiveCompression(method, level);
     activeFrameWriter = null;
+    cancelRequested.set(false);
   }
 
   /**
@@ -520,12 +571,15 @@ public final class NativeConnection implements AutoCloseable {
       out.flush();
       state.transitionTo(ConnectionState.READING_RESPONSE);
       LOG.debug("connection {} insert {} sent", id, request.queryId());
-      return new NativeInsertStream(this, in, out, request.queryId());
+      return new NativeInsertStream(this, in, out, request);
     } catch (RuntimeException e) {
       ConnectionState current = state.state();
       if (current == ConnectionState.WRITING_QUERY || current == ConnectionState.READING_RESPONSE) {
         markBroken();
       }
+      // No data blocks were streamed yet, so a failed INSERT initiation wrote nothing; the
+      // server aborts an insert whose connection drops before its data arrives.
+      classifyIfTransportLevel(e, RetryClass.SAFE_TO_RETRY);
       throw e;
     }
   }
@@ -548,6 +602,55 @@ public final class NativeConnection implements AutoCloseable {
   /** Marks the connection broken from the result pump. */
   void markBrokenPublic() {
     markBroken();
+  }
+
+  /**
+   * Sends the Cancel packet for the in flight query, at most once per exchange. Serialised so a
+   * cancel from another thread cannot interleave with one from the consuming thread; while a
+   * response is being read the send channel is otherwise idle, which is what makes a cross thread
+   * cancel safe.
+   *
+   * @return {@code true} when this call sent the packet, {@code false} when it was already sent or
+   *     the connection is not reading a response
+   */
+  boolean requestCancel() {
+    if (!cancelRequested.compareAndSet(false, true)) {
+      return false;
+    }
+    synchronized (sendLock) {
+      if (state.state() != ConnectionState.READING_RESPONSE) {
+        return false;
+      }
+      try {
+        out.writeVarUInt(ClientPacketType.CANCEL.code());
+        endPacket();
+        out.flush();
+      } catch (RuntimeException e) {
+        // A failed cancel write means the transport is gone; the reader will fail too.
+        markBroken();
+        throw e;
+      }
+      LOG.debug("connection {} cancel sent", id);
+      return true;
+    }
+  }
+
+  /**
+   * Waits until the next response byte is available or the timeout elapses, consuming nothing.
+   * Buffered bytes in the packet reader chain count as available; otherwise the transport is
+   * polled. Only meaningful at packet boundaries.
+   */
+  boolean awaitResponseReadable(long timeoutMillis) {
+    if (in.hasBufferedBytes() || (rawIn != in && rawIn.hasBufferedBytes())) {
+      return true;
+    }
+    int clamped = (int) Math.min(Math.max(timeoutMillis, 1), Integer.MAX_VALUE);
+    return transport.awaitReadable(clamped);
+  }
+
+  /** Returns the configured grace period for concluding a cancelled query, in milliseconds. */
+  long cancelGraceMillis() {
+    return options.cancelGrace().toMillis();
   }
 
   /**
@@ -582,6 +685,8 @@ public final class NativeConnection implements AutoCloseable {
       LOG.trace("connection {} ping ok", id);
     } catch (RuntimeException e) {
       markBroken();
+      // A ping has no effects to duplicate.
+      classifyIfTransportLevel(e, RetryClass.SAFE_TO_RETRY);
       throw e;
     }
   }

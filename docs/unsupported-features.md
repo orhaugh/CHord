@@ -56,15 +56,21 @@ counters on query results. What remains from the Phase 4 scope:
 | Log entry callbacks | Server logs are consumed, bounded and forwarded to SLF4J; push callbacks arrive with the async API in Phase 5 |
 | Compression statistics accessors | Compressed and raw byte counters per exchange |
 
-## Phase 5: pooling and resilience
+## Phase 5 remainder: async conveniences
+
+Pooling and resilience shipped: the bounded `ConnectionPool` with ping validation, lifetime and
+idle eviction, leak diagnostics and graceful close; `FailoverConnector` with in order, round
+robin and random policies, exponential backoff with jitter and per attempt DNS resolution;
+`RetryClass` on every exception with throw site refinement; the Cancel packet, per request
+timeouts with cancellation draining and the cancel grace period; progress and server log
+listeners; the typed insert deduplication token; JFR events and the Micrometer pool binder.
+What remains from the Phase 5 scope:
 
 | Feature | Notes |
 |---|---|
-| Connection pool | Sizing, validation, eviction, leak diagnostics, graceful shutdown |
-| Multiple endpoints, load balancing, failover | Policy SPI, health state, backoff with jitter, DNS re resolution |
-| Retry classification | SAFE_TO_RETRY, RETRY_ONLY_IF_IDEMPOTENT, OUTCOME_UNKNOWN, NOT_RETRYABLE |
-| Cancel packet, deadlines, cancellation draining | Hard abort by socket close exists today |
-| Metrics, OpenTelemetry, JFR events | `chord-observability` |
+| Async API and push callbacks | The blocking API on virtual threads is primary; a `CompletableFuture` facade is unscheduled |
+| Micrometer timers for per operation latency | JFR events carry per operation timing today; registry timers need instrumentation hooks |
+| OpenTelemetry tracing spans | Metrics are reachable through Micrometer bridges; trace propagation (`opentelemetry_trace_parent`) is not implemented |
 
 ## Phase 6: advanced serialisations
 

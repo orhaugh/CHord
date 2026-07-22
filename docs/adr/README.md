@@ -18,3 +18,4 @@ pointer), Deprecated.
 | [ADR-0010](ADR-0010-maven-module-boundaries.md) | Maven module boundaries |
 | [ADR-0011](ADR-0011-project-naming-and-api-conventions.md) | Project naming and API conventions |
 | [ADR-0012](ADR-0012-tls-configuration-and-material.md) | TLS configuration and material |
+| [ADR-0013](ADR-0013-pooling-and-failover.md) | Pooling, failover and cancellation semantics |

@@ -27,6 +27,11 @@ public class ChordProtocolException extends ChordException {
 
   private static final long serialVersionUID = 1L;
 
+  @Override
+  protected RetryClass defaultRetryClass() {
+    return RetryClass.OUTCOME_UNKNOWN;
+  }
+
   /**
    * Creates a protocol violation exception.
    *

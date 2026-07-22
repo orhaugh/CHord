@@ -29,15 +29,13 @@
 
   <name>CHord Observability</name>
   <description>
-    Optional Micrometer, OpenTelemetry and JFR integrations for CHord. Implementation lands in
-    Phase 5 and later; this module carries no functionality yet and makes no support claims.
+    Optional Micrometer integration for CHord: connection pool metrics binding. Per operation
+    timing is provided by the JFR events built into chord-client. OpenTelemetry is reachable
+    through any Micrometer registry bridge; CHord does not depend on it directly.
   </description>
 
   <properties>
     <chord.automatic.module.name>io.github.orhaugh.chord.observability</chord.automatic.module.name>
-    <!-- Placeholder module: not published until it carries real code (Phase 5). -->
-    <maven.deploy.skip>true</maven.deploy.skip>
-    <maven.javadoc.skip>true</maven.javadoc.skip>
   </properties>
 
   <dependencies>
@@ -45,17 +43,19 @@
       <groupId>io.github.orhaugh</groupId>
       <artifactId>chord-client</artifactId>
     </dependency>
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
-
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.sonatype.central</groupId>
-        <artifactId>central-publishing-maven-plugin</artifactId>
-        <configuration>
-          <skipPublishing>true</skipPublishing>
-        </configuration>
-      </plugin>
-    </plugins>
-  </build>
 </project>

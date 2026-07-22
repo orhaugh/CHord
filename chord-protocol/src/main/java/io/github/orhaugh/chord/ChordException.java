@@ -35,6 +35,8 @@ public class ChordException extends RuntimeException {
 
   private static final long serialVersionUID = 1L;
 
+  private RetryClass retryClass;
+
   /**
    * Creates an exception with a message.
    *
@@ -52,5 +54,44 @@ public class ChordException extends RuntimeException {
    */
   public ChordException(String message, Throwable cause) {
     super(message, cause);
+  }
+
+  /**
+   * Returns how this failure relates to retrying the operation that raised it.
+   *
+   * <p>The value combines the exception type's conservative default with what the throw site knew
+   * about the exchange: for example a transport failure during connect classifies as {@link
+   * RetryClass#SAFE_TO_RETRY} while the same failure after INSERT data was streamed classifies as
+   * {@link RetryClass#OUTCOME_UNKNOWN}. CHord itself never retries based on this value.
+   *
+   * @return the retry classification
+   */
+  public RetryClass retryClass() {
+    return retryClass != null ? retryClass : defaultRetryClass();
+  }
+
+  /**
+   * The classification used when the throw site did not refine one; subclasses override with their
+   * type's conservative default.
+   *
+   * @return the default classification for this exception type
+   */
+  protected RetryClass defaultRetryClass() {
+    return RetryClass.NOT_RETRYABLE;
+  }
+
+  /**
+   * Refines the retry classification from context the throw site has, such as the phase of the
+   * exchange. The first classification wins; later calls are ignored so an outer layer cannot
+   * weaken a more informed inner judgement.
+   *
+   * @param classification the refined classification
+   * @return this exception
+   */
+  public ChordException classifiedAs(RetryClass classification) {
+    if (this.retryClass == null) {
+      this.retryClass = java.util.Objects.requireNonNull(classification, "classification");
+    }
+    return this;
   }
 }

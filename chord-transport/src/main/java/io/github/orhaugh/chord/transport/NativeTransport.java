@@ -67,6 +67,22 @@ public interface NativeTransport extends AutoCloseable {
    */
   boolean isSecure();
 
+  /**
+   * Blocks until at least one byte is readable or the timeout elapses, consuming nothing. Used to
+   * enforce deadlines at protocol packet boundaries without risking a timeout in the middle of a
+   * value, which would leave the stream position unknowable.
+   *
+   * <p>The default conservatively reports readability without waiting, so callers fall back to
+   * their blocking read under the transport's ordinary read timeout; implementations backed by a
+   * socket override this with a real poll.
+   *
+   * @param timeoutMillis maximum time to wait, coerced to at least one millisecond
+   * @return {@code true} when a byte is readable or the stream has ended; {@code false} on timeout
+   */
+  default boolean awaitReadable(int timeoutMillis) {
+    return true;
+  }
+
   /** Closes the transport, releasing the underlying resources. Idempotent and never throws. */
   @Override
   void close();

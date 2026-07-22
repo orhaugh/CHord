@@ -53,15 +53,22 @@ public final class TlsTransport implements NativeTransport {
 
   private final SSLSocket socket;
   private final InetSocketAddress address;
-  private final InputStream in;
+  private final PollBufferInputStream in;
   private final OutputStream out;
+  private final int configuredReadTimeoutMillis;
 
   private TlsTransport(
-      SSLSocket socket, InetSocketAddress address, InputStream in, OutputStream out) {
+      SSLSocket socket,
+      InetSocketAddress address,
+      InputStream in,
+      OutputStream out,
+      TransportOptions transportOptions) {
     this.socket = socket;
     this.address = address;
-    this.in = in;
+    // The poll buffer wraps the decrypted stream; awaitReadable polls plaintext bytes.
+    this.in = new PollBufferInputStream(in);
     this.out = out;
+    this.configuredReadTimeoutMillis = (int) transportOptions.readTimeout().toMillis();
   }
 
   /**
@@ -114,7 +121,8 @@ public final class TlsTransport implements NativeTransport {
           session.getCipherSuite());
       warnOnImminentExpiry(host, session);
 
-      return new TlsTransport(ssl, address, ssl.getInputStream(), ssl.getOutputStream());
+      return new TlsTransport(
+          ssl, address, ssl.getInputStream(), ssl.getOutputStream(), transportOptions);
     } catch (SocketTimeoutException e) {
       closeQuietly(ssl, plain);
       throw new ChordTimeoutException(
@@ -187,6 +195,11 @@ public final class TlsTransport implements NativeTransport {
   @Override
   public boolean isSecure() {
     return true;
+  }
+
+  @Override
+  public boolean awaitReadable(int timeoutMillis) {
+    return TcpTransport.pollReadable(socket, in, configuredReadTimeoutMillis, timeoutMillis);
   }
 
   @Override

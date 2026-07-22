@@ -20,11 +20,18 @@ package io.github.orhaugh.chord;
  * failure while establishing the transport.
  *
  * <p>Whether the operation can be retried depends on what had already been sent when the failure
- * occurred; the retry classification introduced in a later phase makes that decision explicit.
+ * occurred; {@link #retryClass()} makes that decision explicit. Without throw site refinement the
+ * default is {@link RetryClass#OUTCOME_UNKNOWN}, the conservative reading of a connection lost mid
+ * exchange.
  */
 public class ChordTransportException extends ChordException {
 
   private static final long serialVersionUID = 1L;
+
+  @Override
+  protected RetryClass defaultRetryClass() {
+    return RetryClass.OUTCOME_UNKNOWN;
+  }
 
   /**
    * Creates a transport exception.

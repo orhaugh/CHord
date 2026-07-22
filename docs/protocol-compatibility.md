@@ -126,7 +126,7 @@ Client packets (`Protocol::Client`):
 | 0 | Hello | Implemented and tested |
 | 1 | Query | Implemented and tested: query id, full ClientInfo at revision 54488, string settings, external roles placeholder, stage, compression flag, query text, parameters |
 | 2 | Data | Implemented and tested: INSERT payload blocks for every writable type, the terminal empty block, and the empty external tables terminator after SELECT queries |
-| 3 | Cancel | Planned, Phase 5 |
+| 3 | Cancel | Implemented and tested: sent by `QueryResult.cancel()` and by expired request timeouts; the stream then concludes with EndOfStream (no Exception for client cancels, mirroring `TCPHandler::processCancel`) and the connection stays reusable after the drain |
 | 4 | Ping | Implemented and tested |
 | 5 | TablesStatusRequest | Planned, after Phase 5 |
 | 6 | KeepAlive | Not planned until a concrete need exists |

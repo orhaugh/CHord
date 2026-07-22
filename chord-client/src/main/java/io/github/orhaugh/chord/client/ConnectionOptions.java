@@ -58,6 +58,7 @@ public final class ConnectionOptions {
   private final int compressionLevel;
   private final CompressionLimits compressionLimits;
   private final TransportOptions transportOptions;
+  private final Duration cancelGrace;
 
   private ConnectionOptions(Builder builder) {
     this.host = builder.host;
@@ -76,6 +77,35 @@ public final class ConnectionOptions {
     this.compressionLevel = builder.compressionLevel;
     this.compressionLimits = builder.compressionLimits;
     this.transportOptions = builder.transportOptions;
+    this.cancelGrace = builder.cancelGrace;
+  }
+
+  private ConnectionOptions(ConnectionOptions source, String host, int port) {
+    this.host = host;
+    this.port = port;
+    this.tls = source.tls;
+    this.database = source.database;
+    this.username = source.username;
+    this.password = source.password.clone();
+    this.clientName = source.clientName;
+    this.quotaKey = source.quotaKey;
+    this.advertisedRevision = source.advertisedRevision;
+    this.allowPlaintextPassword = source.allowPlaintextPassword;
+    this.wireLimits = source.wireLimits;
+    this.blockLimits = source.blockLimits;
+    this.compression = source.compression;
+    this.compressionLevel = source.compressionLevel;
+    this.compressionLimits = source.compressionLimits;
+    this.transportOptions = source.transportOptions;
+    this.cancelGrace = source.cancelGrace;
+  }
+
+  /** Derives options targeting a different endpoint, for multi endpoint connectors. */
+  ConnectionOptions withEndpoint(String host, int port) {
+    if (port < 1 || port > 65535) {
+      throw new ChordConfigurationException("port must be between 1 and 65535, was " + port);
+    }
+    return new ConnectionOptions(this, Objects.requireNonNull(host, "host"), port);
   }
 
   /**
@@ -243,6 +273,16 @@ public final class ConnectionOptions {
     return transportOptions;
   }
 
+  /**
+   * Returns how long a cancelled query may take to conclude its response stream before the
+   * connection is abandoned.
+   *
+   * @return the cancel grace period
+   */
+  public Duration cancelGrace() {
+    return cancelGrace;
+  }
+
   @Override
   public String toString() {
     return "ConnectionOptions{host="
@@ -280,6 +320,7 @@ public final class ConnectionOptions {
     private int compressionLevel;
     private CompressionLimits compressionLimits = CompressionLimits.DEFAULTS;
     private TransportOptions transportOptions = TransportOptions.DEFAULTS;
+    private Duration cancelGrace = Duration.ofSeconds(5);
 
     private Builder() {}
 
@@ -509,6 +550,23 @@ public final class ConnectionOptions {
      */
     public Builder readTimeout(Duration timeout) {
       this.transportOptions = transportOptions.withReadTimeout(timeout);
+      return this;
+    }
+
+    /**
+     * Sets how long a cancelled query may take to conclude its response stream before the
+     * connection is abandoned as broken. Applies to query timeouts and to {@link
+     * QueryResult#cancel()} followed by draining. Defaults to five seconds.
+     *
+     * @param grace the grace period, positive
+     * @return this builder
+     */
+    public Builder cancelGrace(Duration grace) {
+      Objects.requireNonNull(grace, "grace");
+      if (grace.isZero() || grace.isNegative()) {
+        throw new ChordConfigurationException("cancelGrace must be positive");
+      }
+      this.cancelGrace = grace;
       return this;
     }
 
