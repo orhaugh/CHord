@@ -94,18 +94,20 @@ class FailoverConnectorTest {
 
   @Test
   void whenEveryEndpointIsDownTheFailureAggregatesAndClassifiesSafeToRetry() throws Exception {
-    LoopbackPingServer server = new LoopbackPingServer();
-    int deadPort = server.port();
-    server.close();
-    FailoverConnector connector =
-        FailoverConnector.builder(template()).endpoint("127.0.0.1", deadPort).build();
-    assertThatThrownBy(connector::connect)
-        .isInstanceOf(ChordTransportException.class)
-        .hasMessageContaining("No endpoint accepted a connection")
-        .satisfies(
-            e ->
-                assertThat(((ChordTransportException) e).retryClass())
-                    .isEqualTo(RetryClass.SAFE_TO_RETRY));
+    // The endpoint accepts and immediately closes without a hello: a deterministic handshake
+    // failure, unlike a freed port, which another process can reclaim mid test.
+    try (LoopbackPingServer broken = new LoopbackPingServer()) {
+      broken.refuseNewConnections(true);
+      FailoverConnector connector =
+          FailoverConnector.builder(template()).endpoint("127.0.0.1", broken.port()).build();
+      assertThatThrownBy(connector::connect)
+          .isInstanceOf(ChordTransportException.class)
+          .hasMessageContaining("No endpoint accepted a connection")
+          .satisfies(
+              e ->
+                  assertThat(((ChordTransportException) e).retryClass())
+                      .isEqualTo(RetryClass.SAFE_TO_RETRY));
+    }
   }
 
   @Test
