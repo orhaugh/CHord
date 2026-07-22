@@ -354,6 +354,46 @@ public final class NativeConnection implements AutoCloseable {
     LOG.debug("connection {} session timezone changed to {}", id, sessionTimezone);
   }
 
+  /**
+   * Begins a native INSERT: sends the query with pending data, waits for the server supplied schema
+   * and returns the stream for sending blocks.
+   *
+   * <p>The connection is occupied until the stream is finished or closed. A server rejection before
+   * data surfaces from this method as a typed exception and leaves the connection reusable; closing
+   * the stream without {@link InsertStream#finish()} hard aborts the connection so partially
+   * streamed rows are never committed implicitly.
+   *
+   * @param request the INSERT statement, for example {@code INSERT INTO t (a, b) VALUES}; data
+   *     always travels as native blocks, never inline in the SQL
+   * @return the insert stream, which must be finished or closed
+   */
+  public InsertStream insert(QueryRequest request) {
+    state.transitionTo(ConnectionState.WRITING_QUERY);
+    try {
+      QueryCodec.writeQuery(out, request, options, negotiatedRevision, osUser(), localHostname());
+      out.flush();
+      state.transitionTo(ConnectionState.READING_RESPONSE);
+      LOG.debug("connection {} insert {} sent", id, request.queryId());
+      return new NativeInsertStream(this, in, out, request.queryId());
+    } catch (RuntimeException e) {
+      ConnectionState current = state.state();
+      if (current == ConnectionState.WRITING_QUERY || current == ConnectionState.READING_RESPONSE) {
+        markBroken();
+      }
+      throw e;
+    }
+  }
+
+  /** Moves from awaiting the INSERT schema to streaming data blocks. */
+  void beginInsertStreaming() {
+    state.transitionTo(ConnectionState.WRITING_INSERT);
+  }
+
+  /** Moves from streaming INSERT blocks to reading the concluding response. */
+  void finishInsertStreaming() {
+    state.transitionTo(ConnectionState.READING_RESPONSE);
+  }
+
   /** Marks a cleanly concluded response stream, returning the connection to READY. */
   void finishResponse() {
     state.transitionTo(ConnectionState.READY);

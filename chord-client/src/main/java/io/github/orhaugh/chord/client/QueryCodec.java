@@ -46,7 +46,12 @@ final class QueryCodec {
   private QueryCodec() {}
 
   /**
-   * Writes a Query packet followed by the terminal empty external tables block. The caller remains
+   * Writes a Query packet followed by the terminal empty external tables block.
+   *
+   * <p>The terminator is required for every query, INSERT included: the server's external tables
+   * initializer runs inside {@code executeQuery} for all queries and consumes Data packets until an
+   * empty block before the query pipeline starts. For an INSERT the streamed data then follows the
+   * server's schema header and ends with its own, second, empty block. The caller remains
    * responsible for flushing.
    */
   static void writeQuery(
@@ -94,7 +99,7 @@ final class QueryCodec {
       out.writeString("");
     }
 
-    // End of external tables: one empty Data block.
+    // End of external tables: one empty Data block, required for every query kind.
     out.writeVarUInt(ClientPacketType.DATA.code());
     out.writeString(""); // external table name; empty means the main stream
     BlockWriter.writeEmpty(out, negotiatedRevision);
