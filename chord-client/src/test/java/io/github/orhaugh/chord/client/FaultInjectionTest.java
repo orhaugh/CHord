@@ -147,6 +147,89 @@ class FaultInjectionTest {
   }
 
   @Test
+  void deathDuringTheHandshakeClassifiesSafeToRetry() throws Exception {
+    try (ServerSocket server = new ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
+      Thread serverThread =
+          Thread.ofVirtual()
+              .start(
+                  () -> {
+                    try {
+                      // Accept and die without a hello: nothing reached execution.
+                      server.accept().close();
+                    } catch (Exception e) {
+                      // Client assertions carry the test.
+                    }
+                  });
+      assertThatThrownBy(() -> NativeConnection.open(options(server.getLocalPort())))
+          .isInstanceOf(ChordException.class)
+          .satisfies(
+              e ->
+                  assertThat(((ChordException) e).retryClass())
+                      .isEqualTo(RetryClass.SAFE_TO_RETRY));
+      serverThread.join(java.time.Duration.ofSeconds(5));
+    }
+  }
+
+  @Test
+  void deathDuringAPingClassifiesSafeToRetry() throws Exception {
+    try (ServerSocket server = new ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
+      Thread serverThread =
+          Thread.ofVirtual()
+              .start(
+                  () -> {
+                    try (Socket socket = server.accept()) {
+                      socket.getOutputStream().write(helloBytes());
+                      socket.getOutputStream().flush();
+                      drainInbound(socket.getInputStream(), 200);
+                      // Die between exchanges; the next ping has no side effects to lose.
+                    } catch (Exception e) {
+                      // Client assertions carry the test.
+                    }
+                  });
+      NativeConnection connection = NativeConnection.open(options(server.getLocalPort()));
+      serverThread.join(java.time.Duration.ofSeconds(5));
+      assertThatThrownBy(connection::ping)
+          .isInstanceOf(ChordException.class)
+          .satisfies(
+              e ->
+                  assertThat(((ChordException) e).retryClass())
+                      .isEqualTo(RetryClass.SAFE_TO_RETRY));
+      assertThat(connection.state()).isEqualTo(ConnectionState.BROKEN);
+      connection.close();
+    }
+  }
+
+  @Test
+  void deathBeforeTheInsertSchemaClassifiesSafeToRetry() throws Exception {
+    try (ServerSocket server = new ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
+      Thread serverThread =
+          Thread.ofVirtual()
+              .start(
+                  () -> {
+                    try (Socket socket = server.accept()) {
+                      socket.getOutputStream().write(helloBytes());
+                      socket.getOutputStream().flush();
+                      drainInbound(socket.getInputStream(), 200);
+                      // Die before sending the schema: no data was streamed, the server
+                      // aborts inserts whose data never arrived, so retrying is safe.
+                    } catch (Exception e) {
+                      // Client assertions carry the test.
+                    }
+                  });
+      NativeConnection connection = NativeConnection.open(options(server.getLocalPort()));
+      assertThatThrownBy(() -> connection.insert(QueryRequest.of("INSERT INTO t VALUES")))
+          .isInstanceOf(ChordException.class)
+          .satisfies(
+              e ->
+                  assertThat(((ChordException) e).retryClass())
+                      .isEqualTo(RetryClass.SAFE_TO_RETRY));
+      assertThat(connection.state()).isEqualTo(ConnectionState.BROKEN);
+      connection.close();
+      serverThread.join(java.time.Duration.ofSeconds(5));
+    }
+  }
+
+  @Test
   void connectionLostBeforeInsertFinishHasUnknownOutcome() throws Exception {
     try (ServerSocket server = new ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
       Thread serverThread =

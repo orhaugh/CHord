@@ -148,6 +148,52 @@ class NativeConnectionTest {
   }
 
   @Test
+  void insertExchangesDispatchProgressPacketsToListeners() {
+    // Real servers do not send Progress for client fed inserts (verified against 25.8), but
+    // the protocol allows it, so the dispatch and accumulation paths are proven here.
+    ScriptedTransport transport =
+        new ScriptedTransport(
+            script(
+                w -> {
+                  writeServerHello(w);
+                  w.writeVarUInt(1); // Server::Data: the insert schema block
+                  w.writeString("");
+                  io.github.orhaugh.chord.codec.block.BlockWriter.write(
+                      w,
+                      io.github.orhaugh.chord.codec.column.BlockBuilder.forSchema(
+                              decodeSchema("n", "UInt64"))
+                          .build(),
+                      SERVER_REVISION);
+                  w.writeVarUInt(3); // Server::Progress while consuming the stream
+                  w.writeVarUInt(5); // read rows
+                  w.writeVarUInt(40); // read bytes
+                  w.writeVarUInt(0); // total rows to read
+                  w.writeVarUInt(0); // total bytes to read
+                  w.writeVarUInt(5); // written rows
+                  w.writeVarUInt(40); // written bytes
+                  w.writeVarUInt(1_000_000); // elapsed nanos
+                  w.writeVarUInt(5); // EndOfStream
+                }));
+    java.util.List<io.github.orhaugh.chord.protocol.Progress> deltas =
+        new java.util.concurrent.CopyOnWriteArrayList<>();
+    try (NativeConnection connection = NativeConnection.open(options(), transport)) {
+      InsertStream insert =
+          connection.insert(
+              QueryRequest.builder("INSERT INTO t VALUES").onProgress(deltas::add).build());
+      io.github.orhaugh.chord.codec.column.BlockBuilder builder = insert.newBlock();
+      builder.addRow(java.math.BigInteger.ONE);
+      insert.send(builder.build());
+      InsertStream.InsertSummary summary = insert.finish();
+
+      assertThat(deltas).hasSize(1);
+      assertThat(deltas.get(0).readRows()).isEqualTo(5);
+      assertThat(deltas.get(0).writtenRows()).isEqualTo(5);
+      assertThat(summary.progress().writtenRows()).isEqualTo(5); // accumulate ran
+      assertThat(connection.state()).isEqualTo(ConnectionState.READY);
+    }
+  }
+
+  @Test
   void authenticationFailureDuringHandshakeIsTypedAndClosesTransport() {
     ScriptedTransport transport =
         new ScriptedTransport(

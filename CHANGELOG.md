@@ -25,6 +25,20 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
   hostile block decode; and boundary values for every integer, date, decimal and enum width,
   written natively and read back against real servers.
 
+- Coverage for every P1 gap in the test coverage audit. Codec: all eleven Interval kinds,
+  every Decimal width at its extremes, hand built wire vectors for the LowCardinality,
+  Variant, Dynamic and JSON guard branches including compact discriminators and V2 prefixes,
+  ProfileInfo and Progress truncation, compression level bounds. Client: connect timeouts,
+  pool idle eviction and close races, RANDOM failover and backoff caps, retry classification
+  stamps at every protocol phase, hostile chunk headers, TLS protocol and cipher pinning,
+  empty inserts, query id round trips to system.query_log, insert path listeners, and a
+  differential check of decoded values against clickhouse-client output. JDBC: the full
+  ResultSet getter and coercion matrix, PreparedStatement setters and batch semantics,
+  statement lifecycle including cross thread cancel, DatabaseMetaData and ResultSetMetaData
+  surfaces, the complete SQLState mapping matrix, and driver URL, multi host failover and
+  DataSource paths. Observability: JFR event outcomes from real recordings and Micrometer
+  gauges tracked through live pool traffic.
+
 ## [0.1.0] - 2026-07-22
 
 First public release: the native TCP protocol client and its JDBC adapter, tested against

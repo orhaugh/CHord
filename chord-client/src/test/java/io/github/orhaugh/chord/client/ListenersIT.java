@@ -93,6 +93,96 @@ class ListenersIT {
   }
 
   @Test
+  void insertPathListenersReceiveServerLogs() {
+    // Real servers send Log packets during client fed inserts but no Progress packets (the
+    // TCP handler only emits progress from the SELECT pull loop); Progress dispatch on the
+    // insert path is proven by the scripted NativeConnectionTest.
+    List<ServerLogEntry> logEntries = new CopyOnWriteArrayList<>();
+    try (NativeConnection connection = connect()) {
+      try (QueryResult result =
+          connection.query(
+              QueryRequest.of(
+                  "CREATE TABLE listen_ins (n UInt64) ENGINE = MergeTree ORDER BY n"))) {
+        result.nextBlock();
+      }
+      try (InsertStream insert =
+          connection.insert(
+              QueryRequest.builder("INSERT INTO listen_ins VALUES")
+                  .setting("send_logs_level", "trace")
+                  .onLog(logEntries::add)
+                  .build())) {
+        for (int block = 0; block < 20; block++) {
+          io.github.orhaugh.chord.codec.column.BlockBuilder builder = insert.newBlock();
+          for (long n = 0; n < 1_000; n++) {
+            builder.addRow(block * 1_000L + n);
+          }
+          insert.send(builder.build());
+        }
+        InsertStream.InsertSummary summary = insert.finish();
+        assertThat(summary.rowsSent()).isEqualTo(20_000);
+        assertThat(summary.blocksSent()).isEqualTo(20);
+      }
+      assertThat(logEntries).isNotEmpty();
+      assertThat(logEntries.get(0).text()).isNotBlank();
+      assertThat(logEntries.get(0).queryId()).isNotBlank();
+      try (QueryResult result =
+          connection.query(QueryRequest.of("SELECT count() FROM listen_ins"))) {
+        assertThat(((Columns.UInt64Column) result.nextBlock().orElseThrow().column(0)).rawLongAt(0))
+            .isEqualTo(20_000);
+      }
+    }
+  }
+
+  @Test
+  void emptyInsertsCommitNothingAndLeaveTheConnectionClean() {
+    try (NativeConnection connection = connect()) {
+      try (QueryResult result =
+          connection.query(QueryRequest.of("CREATE TABLE empty_ins (n UInt64) ENGINE = Memory"))) {
+        result.nextBlock();
+      }
+      try (InsertStream insert =
+          connection.insert(QueryRequest.of("INSERT INTO empty_ins VALUES"))) {
+        InsertStream.InsertSummary summary = insert.finish();
+        assertThat(summary.rowsSent()).isZero();
+      }
+      try (QueryResult result =
+          connection.query(QueryRequest.of("SELECT count() FROM empty_ins"))) {
+        assertThat(
+                ((io.github.orhaugh.chord.codec.column.Columns.UInt64Column)
+                        result.nextBlock().orElseThrow().column(0))
+                    .rawLongAt(0))
+            .isZero();
+      }
+    }
+  }
+
+  @Test
+  void queryIdsReachTheServerQueryLog() {
+    String queryId = "chord-audit-" + java.util.UUID.randomUUID();
+    try (NativeConnection connection = connect()) {
+      try (QueryResult result =
+          connection.query(QueryRequest.builder("SELECT 1").queryId(queryId).build())) {
+        result.nextBlock();
+      }
+      try (QueryResult result = connection.query(QueryRequest.of("SYSTEM FLUSH LOGS"))) {
+        result.nextBlock();
+      }
+      try (QueryResult result =
+          connection.query(
+              QueryRequest.builder(
+                      "SELECT count() FROM system.query_log WHERE query_id = {qid:String}")
+                  .parameter("qid", queryId)
+                  .build())) {
+        assertThat(
+                ((io.github.orhaugh.chord.codec.column.Columns.UInt64Column)
+                        result.nextBlock().orElseThrow().column(0))
+                    .rawLongAt(0))
+            .isPositive();
+      }
+    }
+  }
+
+  @Test
   void deduplicationTokenMakesARepeatedInsertDropSilently() {
     try (NativeConnection connection = connect()) {
       // Deduplication on non replicated MergeTree requires the table level window setting.

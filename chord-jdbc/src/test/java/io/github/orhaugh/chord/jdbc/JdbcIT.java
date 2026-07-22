@@ -333,6 +333,384 @@ class JdbcIT {
   }
 
   @Test
+  @SuppressWarnings("deprecation") // getBigDecimal(int, scale) is part of the tested surface
+  void resultSetGettersCoverEveryCoercion() throws SQLException {
+    try (Connection connection = connect();
+        Statement statement = connection.createStatement();
+        ResultSet rows =
+            statement.executeQuery(
+                "SELECT true AS b, toInt8(-7) AS i8, toInt16(-300) AS i16, toFloat32(1.5) AS f32,"
+                    + " 'bytes' AS s, toDateTime(1000000, 'UTC') AS dt,"
+                    + " toDecimal64('12.34', 2) AS dec, toUUID('01234567-89ab-cdef-0123-456789abcdef') AS u,"
+                    + " toDate('2024-05-01') AS d, CAST(NULL, 'Nullable(Int32)') AS n,"
+                    + " map('k', 1) AS m")) {
+      assertThat(rows.next()).isTrue();
+      assertThat(rows.getBoolean("b")).isTrue();
+      assertThat(rows.getBoolean(1)).isTrue();
+      assertThat(rows.getByte("i8")).isEqualTo((byte) -7);
+      assertThat(rows.getShort("i16")).isEqualTo((short) -300);
+      assertThat(rows.getFloat("f32")).isEqualTo(1.5f);
+      assertThat(rows.getBytes("s"))
+          .isEqualTo("bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      assertThat(rows.getTimestamp("dt"))
+          .isEqualTo(Timestamp.from(Instant.ofEpochSecond(1_000_000)));
+      assertThat(rows.getTimestamp(6)).isEqualTo(Timestamp.from(Instant.ofEpochSecond(1_000_000)));
+      assertThat(rows.getBigDecimal(7)).isEqualByComparingTo("12.34");
+      assertThat(rows.getBigDecimal(7, 1)).isEqualByComparingTo("12.3");
+      assertThat(rows.getObject("u", java.util.UUID.class))
+          .isEqualTo(java.util.UUID.fromString("01234567-89ab-cdef-0123-456789abcdef"));
+      assertThat(rows.getObject("d", java.time.LocalDate.class))
+          .isEqualTo(java.time.LocalDate.of(2024, 5, 1));
+      assertThat(rows.getObject("dt", Instant.class)).isEqualTo(Instant.ofEpochSecond(1_000_000));
+      java.util.Map<?, ?> mapValue = rows.getObject("m", java.util.Map.class);
+      assertThat(mapValue.get("k")).isEqualTo(1);
+      // The wasNullOr path: a NULL through a primitive getter conversion.
+      assertThat(rows.getObject("n", Integer.class)).isNull();
+      assertThat(rows.getInt("n")).isZero();
+      assertThat(rows.wasNull()).isTrue();
+      // Case insensitive fallback in findColumn.
+      assertThat(rows.getBoolean("B")).isTrue();
+      // Error states: unknown column, out of range index, unsupported conversion.
+      assertThatThrownBy(() -> rows.getString("missing"))
+          .isInstanceOf(SQLException.class)
+          .satisfies(e -> assertThat(((SQLException) e).getSQLState()).isEqualTo("42S22"));
+      assertThatThrownBy(() -> rows.getString(99))
+          .isInstanceOf(SQLException.class)
+          .satisfies(e -> assertThat(((SQLException) e).getSQLState()).isEqualTo("07009"));
+      assertThatThrownBy(() -> rows.getObject("s", java.io.File.class))
+          .isInstanceOf(SQLFeatureNotSupportedException.class);
+    }
+    // The cursor not positioned state.
+    try (Connection connection = connect();
+        Statement statement = connection.createStatement();
+        ResultSet rows = statement.executeQuery("SELECT 1")) {
+      assertThatThrownBy(() -> rows.getInt(1))
+          .isInstanceOf(SQLException.class)
+          .satisfies(e -> assertThat(((SQLException) e).getSQLState()).isEqualTo("24000"));
+    }
+  }
+
+  @Test
+  void preparedStatementSettersAndBatchSemanticsCoverTheSurface() throws SQLException {
+    try (Connection connection = connect()) {
+      try (Statement statement = connection.createStatement()) {
+        statement.executeUpdate(
+            "CREATE TABLE jdbc_setters (id UInt32, b Bool, i8 Int8, i16 Int16, l Int64,"
+                + " f Float32, d Float64, dec Decimal(10, 2), bytes String, day Date,"
+                + " maybe Nullable(String), tags Array(String)) ENGINE = MergeTree ORDER BY id");
+      }
+      try (PreparedStatement insert =
+          connection.prepareStatement(
+              "INSERT INTO jdbc_setters VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+        insert.setInt(1, 1);
+        insert.setBoolean(2, true);
+        insert.setByte(3, (byte) -7);
+        insert.setShort(4, (short) -300);
+        insert.setLong(5, Long.MAX_VALUE);
+        insert.setFloat(6, 1.5f);
+        insert.setDouble(7, 2.5d);
+        insert.setBigDecimal(8, new BigDecimal("12.34"));
+        insert.setBytes(9, new byte[] {104, 105});
+        insert.setDate(10, Date.valueOf(LocalDate.of(2024, 5, 1)));
+        insert.setNull(11, Types.VARCHAR);
+        insert.setObject(12, List.of("a", "b"));
+        // The single row path travels through the same native machinery as batches.
+        assertThat(insert.executeUpdate()).isEqualTo(1);
+
+        // A second round through addBatch proves batches are reusable after execution.
+        insert.setInt(1, 2);
+        insert.setBoolean(2, false);
+        insert.setByte(3, (byte) 0);
+        insert.setShort(4, (short) 0);
+        insert.setLong(5, 0L);
+        insert.setFloat(6, 0f);
+        insert.setDouble(7, 0d);
+        insert.setBigDecimal(8, BigDecimal.ZERO);
+        insert.setBytes(9, new byte[0]);
+        insert.setDate(10, Date.valueOf(LocalDate.ofEpochDay(0)));
+        insert.setString(11, "present");
+        insert.setObject(12, List.of());
+        insert.addBatch();
+        insert.clearBatch(); // discarded: the row must not appear
+        insert.addBatch();
+        assertThat(insert.executeBatch()).containsExactly(1);
+        assertThat(insert.executeBatch()).isEmpty(); // an empty batch is a no op
+      }
+      try (Statement statement = connection.createStatement();
+          ResultSet rows =
+              statement.executeQuery(
+                  "SELECT id, b, i8, l, dec, bytes, maybe, tags FROM jdbc_setters ORDER BY id")) {
+        assertThat(rows.next()).isTrue();
+        assertThat(rows.getBoolean("b")).isTrue();
+        assertThat(rows.getByte("i8")).isEqualTo((byte) -7);
+        assertThat(rows.getLong("l")).isEqualTo(Long.MAX_VALUE);
+        assertThat(rows.getBigDecimal("dec")).isEqualByComparingTo("12.34");
+        assertThat(rows.getString("bytes")).isEqualTo("hi");
+        assertThat(rows.getString("maybe")).isNull();
+        assertThat(rows.next()).isTrue();
+        assertThat(rows.getString("maybe")).isEqualTo("present");
+        assertThat(rows.next()).isFalse();
+      }
+      // Refusals: unbound parameters, bad indexes, non INSERT batches.
+      try (PreparedStatement unbound =
+          connection.prepareStatement("SELECT count() FROM jdbc_setters WHERE id = ?")) {
+        assertThatThrownBy(unbound::executeQuery)
+            .isInstanceOf(SQLException.class)
+            .satisfies(e -> assertThat(((SQLException) e).getSQLState()).isEqualTo("07002"));
+        assertThatThrownBy(() -> unbound.setInt(2, 1))
+            .isInstanceOf(SQLException.class)
+            .satisfies(e -> assertThat(((SQLException) e).getSQLState()).isEqualTo("07009"));
+        unbound.setInt(1, 1);
+        unbound.clearParameters();
+        assertThatThrownBy(unbound::executeQuery)
+            .isInstanceOf(SQLException.class)
+            .satisfies(e -> assertThat(((SQLException) e).getSQLState()).isEqualTo("07002"));
+        assertThatThrownBy(unbound::addBatch).isInstanceOf(SQLFeatureNotSupportedException.class);
+      }
+      // The substitution execute path for a statement with parameters but no result set.
+      try (Statement statement = connection.createStatement()) {
+        statement.executeUpdate(
+            "CREATE TABLE jdbc_setters_copy (id UInt32) ENGINE = MergeTree ORDER BY id");
+      }
+      try (PreparedStatement copy =
+          connection.prepareStatement(
+              "INSERT INTO jdbc_setters_copy SELECT id FROM jdbc_setters WHERE id = ?")) {
+        copy.setInt(1, 1);
+        assertThat(copy.executeUpdate()).isEqualTo(1);
+      }
+      // Parameter metadata knows the count and mode without a server round trip.
+      try (PreparedStatement prepared = connection.prepareStatement("SELECT ?, ?")) {
+        java.sql.ParameterMetaData metadata = prepared.getParameterMetaData();
+        assertThat(metadata.getParameterCount()).isEqualTo(2);
+        assertThat(metadata.getParameterMode(1))
+            .isEqualTo(java.sql.ParameterMetaData.parameterModeIn);
+        assertThatThrownBy(() -> metadata.getParameterType(1))
+            .isInstanceOf(SQLFeatureNotSupportedException.class);
+        assertThat(prepared.getMetaData()).isNull(); // before execution
+      }
+    }
+  }
+
+  @Test
+  void statementLifecycleFollowsTheJdbcContract() throws SQLException, InterruptedException {
+    try (Connection connection = connect()) {
+      try (Statement statement = connection.createStatement()) {
+        assertThat(statement.executeUpdate("CREATE TABLE jdbc_life (n UInt8) ENGINE = Memory"))
+            .isZero();
+        assertThat(statement.getLargeUpdateCount()).isZero();
+        assertThat(statement.execute("SELECT 1")).isTrue();
+        assertThat(statement.getUpdateCount()).isEqualTo(-1);
+        ResultSet rows = statement.getResultSet();
+        assertThat(rows.next()).isTrue();
+        assertThat(statement.getMoreResults()).isFalse();
+        assertThat(rows.isClosed()).isTrue(); // getMoreResults closes the current result
+        assertThat(statement.getUpdateCount()).isEqualTo(-1);
+      }
+      // closeOnCompletion closes the statement once its result set fully drains.
+      Statement completing = connection.createStatement();
+      completing.closeOnCompletion();
+      assertThat(completing.isCloseOnCompletion()).isTrue();
+      try (ResultSet rows = completing.executeQuery("SELECT 1")) {
+        while (rows.next()) {
+          rows.getInt(1);
+        }
+      }
+      assertThat(completing.isClosed()).isTrue();
+      // Direct cancel from another thread while the consumer streams.
+      try (Statement statement = connection.createStatement()) {
+        try (ResultSet rows = statement.executeQuery("SELECT number FROM system.numbers")) {
+          assertThat(rows.next()).isTrue();
+          Thread canceller =
+              Thread.ofVirtual()
+                  .start(
+                      () -> {
+                        try {
+                          statement.cancel();
+                        } catch (SQLException e) {
+                          // The consumer side assertions carry the test.
+                        }
+                      });
+          int drained = 0;
+          while (rows.next() && drained < 10_000_000) {
+            drained++;
+          }
+          canceller.join(java.time.Duration.ofSeconds(10));
+        }
+        try (ResultSet rows = statement.executeQuery("SELECT 3")) {
+          assertThat(rows.next()).isTrue();
+          assertThat(rows.getInt(1)).isEqualTo(3);
+        }
+      }
+    }
+  }
+
+  @Test
+  void databaseMetadataSurfaceAnswersTools() throws SQLException {
+    try (Connection connection = connect()) {
+      DatabaseMetaData metadata = connection.getMetaData();
+      assertThat(metadata.getDatabaseProductVersion()).isNotBlank();
+      assertThat(metadata.getDatabaseMajorVersion()).isGreaterThanOrEqualTo(25);
+      assertThat(metadata.getDriverName()).isEqualTo("CHord JDBC");
+      assertThat(metadata.getJDBCMajorVersion()).isEqualTo(4);
+      assertThat(metadata.getIdentifierQuoteString()).isEqualTo("`");
+      assertThat(metadata.supportsBatchUpdates()).isTrue();
+      assertThat(metadata.getSQLStateType()).isEqualTo(DatabaseMetaData.sqlStateSQL);
+      assertThat(metadata.getRowIdLifetime()).isEqualTo(java.sql.RowIdLifetime.ROWID_UNSUPPORTED);
+
+      try (ResultSet catalogs = metadata.getCatalogs()) {
+        java.util.Set<String> names = new java.util.HashSet<>();
+        while (catalogs.next()) {
+          names.add(catalogs.getString("TABLE_CAT"));
+        }
+        assertThat(names).contains(CLICKHOUSE.database(), "system");
+      }
+      try (ResultSet types = metadata.getTableTypes()) {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        while (types.next()) {
+          names.add(types.getString("TABLE_TYPE"));
+        }
+        assertThat(names).containsExactly("TABLE", "VIEW", "SYSTEM TABLE");
+      }
+      try (ResultSet typeInfo = metadata.getTypeInfo()) {
+        assertThat(typeInfo.next()).isTrue();
+        assertThat(typeInfo.getString("TYPE_NAME")).isNotBlank();
+      }
+      try (ResultSet functions = metadata.getFunctions(null, null, "toStr%")) {
+        assertThat(functions.next()).isTrue();
+        assertThat(functions.getString("FUNCTION_NAME")).startsWith("toStr");
+      }
+      try (Statement statement = connection.createStatement()) {
+        statement.executeUpdate("CREATE TABLE jdbc_meta_base (n UInt8) ENGINE = Memory");
+        statement.executeUpdate("CREATE VIEW jdbc_meta_view AS SELECT n FROM jdbc_meta_base");
+      }
+      try (ResultSet views =
+          metadata.getTables(CLICKHOUSE.database(), null, "jdbc_meta_%", new String[] {"VIEW"})) {
+        assertThat(views.next()).isTrue();
+        assertThat(views.getString("TABLE_NAME")).isEqualTo("jdbc_meta_view");
+        assertThat(views.getString("TABLE_TYPE")).isEqualTo("VIEW");
+        assertThat(views.next()).isFalse(); // the types filter excluded the base TABLE
+      }
+      try (ResultSet system = metadata.getTables("system", null, "tables", null)) {
+        assertThat(system.next()).isTrue();
+        assertThat(system.getString("TABLE_TYPE")).isEqualTo("SYSTEM TABLE");
+      }
+      try (ResultSet keys = metadata.getImportedKeys(CLICKHOUSE.database(), null, "anything")) {
+        assertThat(keys.next()).isFalse(); // truthful: ClickHouse has no foreign keys
+      }
+    }
+  }
+
+  @Test
+  void resultSetMetadataDescribesEveryMappedType() throws SQLException {
+    try (Connection connection = connect();
+        Statement statement = connection.createStatement();
+        ResultSet rows =
+            statement.executeQuery(
+                "SELECT toUInt8(1) AS u8, toUInt16(1) AS u16, toUInt32(1) AS u32,"
+                    + " toUInt64(1) AS u64, toInt8(1) AS i8, toFloat32(1) AS f32,"
+                    + " toFloat64(1) AS f64, true AS b, toDate('2024-01-01') AS d,"
+                    + " toDateTime(0, 'UTC') AS dt, toDecimal64('1.23', 2) AS dec,"
+                    + " 'x' AS s, [1] AS arr, toUUID('01234567-89ab-cdef-0123-456789abcdef') AS u")) {
+      ResultSetMetaData metadata = rows.getMetaData();
+      assertThat(metadata.getColumnType(1)).isEqualTo(Types.SMALLINT);
+      assertThat(metadata.getColumnType(2)).isEqualTo(Types.INTEGER);
+      assertThat(metadata.getColumnType(3)).isEqualTo(Types.BIGINT);
+      assertThat(metadata.getColumnType(4)).isEqualTo(Types.NUMERIC);
+      assertThat(metadata.getColumnType(5)).isEqualTo(Types.TINYINT);
+      assertThat(metadata.getColumnType(6)).isEqualTo(Types.REAL);
+      assertThat(metadata.getColumnType(7)).isEqualTo(Types.DOUBLE);
+      assertThat(metadata.getColumnType(8)).isEqualTo(Types.BOOLEAN);
+      assertThat(metadata.getColumnType(9)).isEqualTo(Types.DATE);
+      assertThat(metadata.getColumnType(10)).isEqualTo(Types.TIMESTAMP);
+      assertThat(metadata.getColumnType(11)).isEqualTo(Types.DECIMAL);
+      assertThat(metadata.getColumnType(13)).isEqualTo(Types.ARRAY);
+      assertThat(metadata.getColumnType(14)).isEqualTo(Types.OTHER);
+
+      assertThat(metadata.getColumnClassName(4)).isEqualTo("java.math.BigInteger");
+      assertThat(metadata.getColumnClassName(7)).isEqualTo("java.lang.Double");
+      assertThat(metadata.getColumnClassName(12)).isEqualTo("java.lang.String");
+      assertThat(metadata.getColumnTypeName(11).replace(" ", "")).isEqualTo("Decimal(18,2)");
+      assertThat(metadata.getPrecision(11)).isEqualTo(18);
+      assertThat(metadata.getScale(11)).isEqualTo(2);
+      assertThat(metadata.isSigned(5)).isTrue();
+      assertThat(metadata.isSigned(1)).isFalse();
+      assertThat(metadata.isSigned(7)).isTrue();
+      assertThat(metadata.getColumnLabel(12)).isEqualTo("s");
+      assertThat(metadata.isReadOnly(1)).isTrue();
+    }
+  }
+
+  @Test
+  void driverUrlOptionsAndDataSourcePathsAreWired() throws SQLException {
+    String base =
+        "jdbc:chord://"
+            + CLICKHOUSE.getHost()
+            + ":"
+            + CLICKHOUSE.nativePort()
+            + "/"
+            + CLICKHOUSE.database();
+    Properties credentials = new Properties();
+    credentials.setProperty("user", CLICKHOUSE.username());
+    credentials.setProperty("password", CLICKHOUSE.password());
+    credentials.setProperty("allow_plaintext_password", "true");
+
+    // Multiple hosts: the first endpoint refuses instantly and the driver fails over.
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:chord://127.0.0.1:1,"
+                + CLICKHOUSE.getHost()
+                + ":"
+                + CLICKHOUSE.nativePort()
+                + "/"
+                + CLICKHOUSE.database()
+                + "?allow_plaintext_password=true",
+            credentials)) {
+      try (Statement statement = connection.createStatement();
+          ResultSet rows = statement.executeQuery("SELECT 5")) {
+        assertThat(rows.next()).isTrue();
+        assertThat(rows.getInt(1)).isEqualTo(5);
+      }
+    }
+    // Compression and the default statement timeout arrive through URL parameters.
+    try (Connection connection =
+        DriverManager.getConnection(
+            base + "?compression=zstd&query_timeout_ms=60000", credentials)) {
+      try (Statement statement = connection.createStatement()) {
+        assertThat(statement.getQueryTimeout()).isEqualTo(60);
+        try (ResultSet rows = statement.executeQuery("SELECT sum(number) FROM numbers(100000)")) {
+          assertThat(rows.next()).isTrue();
+          assertThat(rows.getLong(1)).isEqualTo(4_999_950_000L);
+        }
+      }
+    }
+    assertThatThrownBy(() -> DriverManager.getConnection(base + "?compression=snappy", credentials))
+        .isInstanceOf(SQLException.class)
+        .satisfies(e -> assertThat(((SQLException) e).getSQLState()).isEqualTo("08001"));
+    assertThatThrownBy(
+            () -> DriverManager.getConnection(base + "?connect_timeout_ms=abc", credentials))
+        .isInstanceOf(SQLException.class)
+        .satisfies(e -> assertThat(((SQLException) e).getSQLState()).isEqualTo("08001"));
+
+    ChordDataSource dataSource = new ChordDataSource();
+    assertThatThrownBy(dataSource::getConnection)
+        .isInstanceOf(SQLException.class)
+        .satisfies(e -> assertThat(((SQLException) e).getSQLState()).isEqualTo("08001"));
+    dataSource.setUrl("jdbc:mysql://elsewhere");
+    assertThatThrownBy(dataSource::getConnection).isInstanceOf(SQLException.class);
+    dataSource.setUrl(base + "?allow_plaintext_password=true");
+    try (Connection connection =
+        dataSource.getConnection(CLICKHOUSE.username(), CLICKHOUSE.password())) {
+      assertThat(connection.isValid(5)).isTrue();
+      // Unwrap reaches the native connection underneath the adapter.
+      assertThat(connection.unwrap(io.github.orhaugh.chord.client.NativeConnection.class))
+          .isNotNull();
+      assertThat(connection.isWrapperFor(io.github.orhaugh.chord.client.NativeConnection.class))
+          .isTrue();
+      assertThatThrownBy(() -> connection.unwrap(Integer.class)).isInstanceOf(SQLException.class);
+    }
+  }
+
+  @Test
   void floatSpecialValuesSurfaceThroughTheGetters() throws SQLException {
     try (Connection connection = connect();
         Statement statement = connection.createStatement();

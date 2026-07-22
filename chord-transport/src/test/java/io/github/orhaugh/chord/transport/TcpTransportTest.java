@@ -98,6 +98,26 @@ class TcpTransportTest {
   }
 
   @Test
+  void connectTimeoutsSurfaceAsChordTimeouts() {
+    // 240.0.0.1 is class E space that blackholes on common networks, so the SYN never
+    // completes and the configured connect timeout fires. Environments that instead reject
+    // the route outright skip the test rather than fail it.
+    TransportOptions options =
+        TransportOptions.DEFAULTS.withConnectTimeout(java.time.Duration.ofMillis(300));
+    long start = System.nanoTime();
+    try {
+      TcpTransport.connect("240.0.0.1", 9, options).close();
+      org.junit.jupiter.api.Assumptions.abort("240.0.0.1 unexpectedly accepted a connection");
+    } catch (io.github.orhaugh.chord.ChordTimeoutException e) {
+      assertThat(e).hasMessageContaining("timed out");
+      assertThat((System.nanoTime() - start) / 1_000_000).isLessThan(5_000);
+    } catch (ChordTransportException e) {
+      org.junit.jupiter.api.Assumptions.abort(
+          "This network rejects class E addresses instead of blackholing them");
+    }
+  }
+
+  @Test
   void refusedConnectionRaisesTransportException() throws IOException {
     // A just released ephemeral port can be rebound by another process before the connect
     // attempt, so retry with fresh ports until one refuses; a connect that succeeds by that

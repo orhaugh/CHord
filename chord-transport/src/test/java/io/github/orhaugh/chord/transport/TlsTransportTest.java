@@ -104,6 +104,59 @@ class TlsTransportTest {
   }
 
   @Test
+  void protocolAndCipherPinningApplyToTheHandshake() throws Exception {
+    try (TlsTestServer server = new TlsTestServer(certs, false)) {
+      // Pinning a real protocol succeeds and the pin is honoured end to end.
+      try (TlsTransport transport =
+          TlsTransport.connect(
+              "localhost",
+              server.port(),
+              TransportOptions.DEFAULTS,
+              TlsOptions.builder().trustedCertificates(caPem).protocols("TLSv1.3").build())) {
+        assertEcho(transport);
+      }
+      // An impossible combination (a TLS 1.3 only cipher on a TLS 1.2 only handshake) must
+      // fail the handshake, proving both pins actually reach the socket parameters.
+      assertThatThrownBy(
+              () ->
+                  TlsTransport.connect(
+                      "localhost",
+                      server.port(),
+                      TransportOptions.DEFAULTS,
+                      TlsOptions.builder()
+                          .trustedCertificates(caPem)
+                          .protocols("TLSv1.2")
+                          .cipherSuites("TLS_AES_128_GCM_SHA256")
+                          .build()))
+          .isInstanceOf(ChordTransportException.class);
+    }
+  }
+
+  @Test
+  void reportsNotYetValidServerCertificates() throws Exception {
+    Instant now = Instant.now();
+    TestCertificates future =
+        TestCertificates.generateWithServerValidity(
+            now.plus(java.time.Duration.ofDays(1)),
+            now.plus(java.time.Duration.ofDays(2)),
+            List.of("localhost"),
+            List.of("127.0.0.1"));
+    Path futureCa =
+        TestCertificates.write(tempDir.resolve("fut"), "ca.crt", future.caCertificatePem());
+    try (TlsTestServer server = new TlsTestServer(future, false)) {
+      assertThatThrownBy(
+              () ->
+                  TlsTransport.connect(
+                      "localhost",
+                      server.port(),
+                      TransportOptions.DEFAULTS,
+                      TlsOptions.builder().trustedCertificates(futureCa).build()))
+          .isInstanceOf(ChordTransportException.class)
+          .hasMessageContaining("not yet valid");
+    }
+  }
+
+  @Test
   void rejectsUntrustedServerWithTrustHint() throws Exception {
     try (TlsTestServer server = new TlsTestServer(certs, false)) {
       assertThatThrownBy(

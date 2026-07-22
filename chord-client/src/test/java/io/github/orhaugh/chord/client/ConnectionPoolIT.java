@@ -52,6 +52,27 @@ class ConnectionPoolIT {
   }
 
   @Test
+  void poolOverFailoverReachesTheRealServerAndRunsQueries() throws Exception {
+    // The first endpoint refuses instantly; the connector must fail over and the pooled
+    // connection must serve a real query, not just a ping.
+    FailoverConnector connector =
+        FailoverConnector.builder(options())
+            .endpoint("127.0.0.1", 1)
+            .endpoint(CLICKHOUSE.getHost(), CLICKHOUSE.nativePort())
+            .build();
+    try (ConnectionPool pool =
+        ConnectionPool.builder(connector.asFactory())
+            .maxSize(2)
+            .validationInterval(Duration.ZERO)
+            .build()) {
+      try (PooledConnection lease = pool.acquire();
+          QueryResult result = lease.query(QueryRequest.of("SELECT 40 + 2"))) {
+        assertThat(result.nextBlock().orElseThrow().column(0).objectAt(0)).isEqualTo(42);
+      }
+    }
+  }
+
+  @Test
   void concurrentWorkloadsShareABoundedSetOfRealConnections() throws Exception {
     try (ConnectionPool pool =
         ConnectionPool.builder(options()).maxSize(4).validationInterval(Duration.ZERO).build()) {

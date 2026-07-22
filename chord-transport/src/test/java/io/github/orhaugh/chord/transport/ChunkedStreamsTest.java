@@ -176,6 +176,21 @@ class ChunkedStreamsTest {
   }
 
   @Test
+  void hostileDeclaredChunkLengthsStreamWithoutUpfrontAllocation() throws IOException {
+    // A chunk header declaring 4 GiB must not allocate anything: the reader streams the bytes
+    // that actually exist and fails explicitly when the stream ends inside the chunk.
+    ByteArrayOutputStream wire = new ByteArrayOutputStream();
+    wire.writeBytes(header(0xFFFFFFFF));
+    wire.writeBytes("only-nine".getBytes(StandardCharsets.US_ASCII));
+    ChunkedInputStream in = new ChunkedInputStream(new ByteArrayInputStream(wire.toByteArray()));
+    byte[] received = in.readNBytes(9);
+    assertThat(received).isEqualTo("only-nine".getBytes(StandardCharsets.US_ASCII));
+    assertThatThrownBy(in::read)
+        .isInstanceOf(ChordProtocolException.class)
+        .hasMessageContaining("middle of a chunk");
+  }
+
+  @Test
   void emptyChunkAtMessageStartIsAProtocolViolation() {
     byte[] wire = header(0);
     ChunkedInputStream in = new ChunkedInputStream(new ByteArrayInputStream(wire));

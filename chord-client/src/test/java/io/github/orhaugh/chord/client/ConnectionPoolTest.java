@@ -170,6 +170,66 @@ class ConnectionPoolTest {
   }
 
   @Test
+  void idleConnectionsAreEvictedAfterTheIdleTimeout() throws Exception {
+    try (LoopbackPingServer server = new LoopbackPingServer();
+        ConnectionPool pool =
+            ConnectionPool.builder(server.options())
+                .maxSize(2)
+                .idleTimeout(Duration.ofMillis(200))
+                .build()) {
+      try (PooledConnection lease = pool.acquire()) {
+        lease.ping();
+      }
+      assertThat(pool.idleCount()).isEqualTo(1);
+      // The maintenance thread wakes on a period derived from the idle timeout; wait for it
+      // to reclaim the resting connection.
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      while (pool.idleCount() > 0 && System.nanoTime() < deadline) {
+        Thread.sleep(50);
+      }
+      assertThat(pool.idleCount()).isZero();
+    }
+  }
+
+  @Test
+  void closingThePoolWhileLeasesAreActiveIsSafe() throws Exception {
+    try (LoopbackPingServer server = new LoopbackPingServer()) {
+      ConnectionPool pool = ConnectionPool.builder(server.options()).maxSize(4).build();
+      PooledConnection held = pool.acquire();
+      // Racing closers and acquirers must neither deadlock nor corrupt the pool.
+      CountDownLatch done = new CountDownLatch(3);
+      try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+        for (int i = 0; i < 2; i++) {
+          executor.submit(
+              () -> {
+                try {
+                  try (PooledConnection lease = pool.acquire()) {
+                    lease.ping();
+                  }
+                } catch (RuntimeException e) {
+                  // Acquire may find the pool already closed; that is the documented path.
+                } finally {
+                  done.countDown();
+                }
+              });
+        }
+        executor.submit(
+            () -> {
+              pool.close();
+              done.countDown();
+            });
+        assertThat(done.await(20, TimeUnit.SECONDS)).isTrue();
+      }
+      // The held lease survived the close; its connection is closed once returned.
+      NativeConnection underlying = held.connection();
+      held.ping();
+      held.close();
+      assertThat(underlying.state().name()).isEqualTo("CLOSED");
+      assertThatThrownBy(pool::acquire).isInstanceOf(IllegalStateException.class);
+    }
+  }
+
+  @Test
   void heldLeasesBeyondTheThresholdAreReportedAsLeaks() throws Exception {
     try (LoopbackPingServer server = new LoopbackPingServer();
         ConnectionPool pool =

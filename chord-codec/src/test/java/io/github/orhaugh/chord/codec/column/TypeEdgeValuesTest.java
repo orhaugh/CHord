@@ -239,6 +239,56 @@ class TypeEdgeValuesTest {
   }
 
   @Test
+  void everyIntervalKindCarriesValues() {
+    for (String kind :
+        new String[] {
+          "Nanosecond",
+          "Microsecond",
+          "Millisecond",
+          "Second",
+          "Minute",
+          "Hour",
+          "Day",
+          "Week",
+          "Month",
+          "Quarter",
+          "Year"
+        }) {
+      Column column = roundTripColumn("Interval" + kind, -3L, 0L, 12345L);
+      assertThat(column.objectAt(0)).as(kind).isEqualTo(-3L);
+      assertThat(column.objectAt(2)).as(kind).isEqualTo(12345L);
+    }
+  }
+
+  @Test
+  void everyDecimalWidthRoundTripsItsExtremes() {
+    Column d64 =
+        roundTripColumn(
+            "Decimal64(6)",
+            new BigDecimal("999999999999.999999"),
+            new BigDecimal("-999999999999.999999"));
+    assertThat((BigDecimal) d64.objectAt(0)).isEqualByComparingTo("999999999999.999999");
+    assertThat((BigDecimal) d64.objectAt(1)).isEqualByComparingTo("-999999999999.999999");
+
+    Column d128 =
+        roundTripColumn(
+            "Decimal(38, 10)",
+            new BigDecimal("9999999999999999999999999999.9999999999"),
+            new BigDecimal("-9999999999999999999999999999.9999999999"));
+    assertThat((BigDecimal) d128.objectAt(0))
+        .isEqualByComparingTo("9999999999999999999999999999.9999999999");
+    assertThat((BigDecimal) d128.objectAt(1))
+        .isEqualByComparingTo("-9999999999999999999999999999.9999999999");
+
+    String digits76 = "9".repeat(56) + "." + "9".repeat(20);
+    Column d256 =
+        roundTripColumn(
+            "Decimal(76, 20)", new BigDecimal(digits76), new BigDecimal("-" + digits76));
+    assertThat((BigDecimal) d256.objectAt(0)).isEqualByComparingTo(digits76);
+    assertThat((BigDecimal) d256.objectAt(1)).isEqualByComparingTo("-" + digits76);
+  }
+
+  @Test
   void decimal32AndEnum16RoundTripTheirExtremes() {
     Column decimal =
         roundTripColumn(

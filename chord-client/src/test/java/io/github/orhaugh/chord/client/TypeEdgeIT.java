@@ -201,6 +201,37 @@ class TypeEdgeIT {
         assertThat(block.column(9).objectAt(1)).isEqualTo(LocalDate.of(2299, 12, 31));
         assertThat(block.column(10).objectAt(1)).isEqualTo(Instant.ofEpochSecond(4_294_967_295L));
       }
+      // Differential check: the official client must print exactly the values we decoded,
+      // proving both directions against an independent implementation.
+      try {
+        var official =
+            CLICKHOUSE.execInContainer(
+                "clickhouse-client",
+                "--user",
+                CLICKHOUSE.username(),
+                "--password",
+                CLICKHOUSE.password(),
+                "--database",
+                CLICKHOUSE.database(),
+                "-q",
+                "SELECT u16, i16, u32, i32, u128, i256, d32, e16, d, d32d, dt"
+                    + " FROM width_edge ORDER BY id FORMAT TabSeparated");
+        assertThat(official.getExitCode()).isZero();
+        String i256MinText =
+            "-57896044618658097711785492504343953926634992332820282019728792003956564819968";
+        assertThat(official.getStdout().strip().lines().toList())
+            .containsExactly(
+                "0\t-32768\t0\t-2147483648\t0\t"
+                    + i256MinText
+                    + "\t-99999.9999\tlo\t1970-01-01\t1900-01-01\t1970-01-01 00:00:00",
+                "65535\t32767\t4294967295\t2147483647\t"
+                    + "340282366920938463463374607431768211455\t"
+                    + "57896044618658097711785492504343953926634992332820282019728792003956564819967"
+                    + "\t99999.9999\thi\t2149-06-06\t2299-12-31\t2106-02-07 06:28:15");
+      } catch (java.io.IOException | InterruptedException e) {
+        throw new AssertionError("Differential check against clickhouse-client failed", e);
+      }
+
       // The same widths as server generated literals, so decode is proven independently of
       // our own encoder.
       try (QueryResult result =

@@ -111,6 +111,57 @@ class FailoverConnectorTest {
   }
 
   @Test
+  void randomPolicyReachesEveryHealthyEndpoint() throws Exception {
+    try (LoopbackPingServer first = new LoopbackPingServer();
+        LoopbackPingServer second = new LoopbackPingServer()) {
+      FailoverConnector connector =
+          FailoverConnector.builder(template())
+              .endpoint("127.0.0.1", first.port())
+              .endpoint("127.0.0.1", second.port())
+              .policy(LoadBalancingPolicy.RANDOM)
+              .build();
+      Set<String> seen = new HashSet<>();
+      for (int i = 0; i < 24 && seen.size() < 2; i++) {
+        try (NativeConnection connection = connector.connect()) {
+          seen.add(hostOf(connection));
+        }
+      }
+      assertThat(seen)
+          .containsExactlyInAnyOrder("127.0.0.1:" + first.port(), "127.0.0.1:" + second.port());
+    }
+  }
+
+  @Test
+  void backoffIsCappedAtTheConfiguredMaximum() throws Exception {
+    try (LoopbackPingServer only = new LoopbackPingServer()) {
+      FailoverConnector connector =
+          FailoverConnector.builder(template())
+              .endpoint("127.0.0.1", only.port())
+              .initialBackoff(Duration.ofMillis(50))
+              .maxBackoff(Duration.ofMillis(120))
+              .build();
+      only.refuseNewConnections(true);
+      // Eight consecutive failures would push uncapped exponential backoff into seconds;
+      // with the cap plus full jitter every wait stays at or below 120 milliseconds.
+      for (int i = 0; i < 8; i++) {
+        try {
+          connector.connect().close();
+        } catch (RuntimeException e) {
+          // Expected: the endpoint refuses handshakes.
+        }
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(400);
+        while (connector.isBackingOff(Endpoint.of("127.0.0.1", only.port()))
+            && System.nanoTime() < deadline) {
+          Thread.sleep(10);
+        }
+        assertThat(connector.isBackingOff(Endpoint.of("127.0.0.1", only.port())))
+            .as("backoff after failure " + (i + 1) + " must clear within the 120ms cap")
+            .isFalse();
+      }
+    }
+  }
+
+  @Test
   void backedOffEndpointsAreStillTriedWhenNothingElseIsLeft() throws Exception {
     try (LoopbackPingServer only = new LoopbackPingServer()) {
       FailoverConnector connector =
