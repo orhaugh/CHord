@@ -336,19 +336,13 @@ class SelectQueryIT {
   }
 
   @Test
-  void lowCardinalityColumnsFailExplicitlyUntilPhaseSix() {
+  void lowCardinalityColumnsDecodeTransparently() {
     try (NativeConnection connection = connect()) {
-      assertThatThrownBy(
-              () -> {
-                try (QueryResult result =
-                    connection.query(QueryRequest.of("SELECT toLowCardinality('x') AS lc"))) {
-                  result.nextBlock();
-                }
-              })
-          .isInstanceOf(io.github.orhaugh.chord.codec.UnsupportedClickHouseTypeException.class)
-          .hasMessageContaining("Phase 6");
-      // An undecodable column poisons the connection by design.
-      assertThat(connection.state()).isEqualTo(ConnectionState.BROKEN);
+      try (QueryResult result =
+          connection.query(QueryRequest.of("SELECT toLowCardinality('x') AS lc"))) {
+        assertThat(result.nextBlock().orElseThrow().column(0).objectAt(0)).isEqualTo("x");
+      }
+      assertThat(connection.state()).isEqualTo(ConnectionState.READY);
     }
   }
 

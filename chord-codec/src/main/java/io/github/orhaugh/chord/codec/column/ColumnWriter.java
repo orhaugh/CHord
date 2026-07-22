@@ -207,9 +207,77 @@ public final class ColumnWriter {
         write(out, c.rawKeys());
         write(out, c.rawValues());
       }
+      case Columns.LowCardinalityColumn c -> writeLowCardinality(out, c);
       default ->
           throw new UnsupportedClickHouseTypeException(
               "Cannot encode column type " + column.type().name());
+    }
+  }
+
+  /**
+   * Writes the bulk state prefix of a column, mirroring {@code serializeBinaryBulkStatePrefix}:
+   * containers recurse in substream order and LowCardinality writes its keys version. Written once
+   * per column per block, immediately before the column body, and only for non empty blocks.
+   *
+   * @param out writer to encode into
+   * @param column the column whose prefix to write
+   */
+  public static void writePrefix(WireWriter out, Column column) {
+    switch (column) {
+      case Columns.LowCardinalityColumn c ->
+          out.writeInt64Le(1); // KeysSerializationVersion::SharedDictionariesWithAdditionalKeys
+      case Columns.NullableColumn c -> writePrefix(out, c.inner());
+      case Columns.ArrayColumn c -> writePrefix(out, c.elements());
+      case Columns.MapColumn c -> {
+        writePrefix(out, c.rawKeys());
+        writePrefix(out, c.rawValues());
+      }
+      case Columns.TupleColumn c -> {
+        int arity =
+            ((io.github.orhaugh.chord.codec.type.ClickHouseType.TupleType) c.type())
+                .elements()
+                .size();
+        for (int e = 0; e < arity; e++) {
+          writePrefix(out, c.element(e));
+        }
+      }
+      default -> {
+        // Leaf types have no bulk state prefix.
+      }
+    }
+  }
+
+  /**
+   * Writes a LowCardinality column body in the layout the server itself writes for native blocks:
+   * index type with the additional keys and update dictionary flags, the dictionary including its
+   * default slot, then the row indexes at the smallest fitting width.
+   */
+  private static void writeLowCardinality(WireWriter out, Columns.LowCardinalityColumn c) {
+    Column dictionary = c.dictionary();
+    int[] indexes = c.rawIndexes();
+    // Dictionary sizes are int bounded, so eight byte indexes are unreachable here.
+    int keyCount = dictionary.size();
+    int widthTag;
+    if (keyCount <= 1 << 8) {
+      widthTag = 0;
+    } else if (keyCount <= 1 << 16) {
+      widthTag = 1;
+    } else {
+      widthTag = 2;
+    }
+    long hasAdditionalKeysBit = 1L << 9;
+    long needUpdateDictionaryBit = 1L << 10;
+    out.writeInt64Le(widthTag | hasAdditionalKeysBit | needUpdateDictionaryBit);
+    out.writeInt64Le(keyCount);
+    write(out, dictionary);
+    out.writeInt64Le(indexes.length);
+    for (int index : indexes) {
+      switch (widthTag) {
+        case 0 -> out.writeUInt8(index);
+        case 1 -> writeInt16(out, (short) index);
+        case 2 -> out.writeInt32Le(index);
+        default -> out.writeInt64Le(index);
+      }
     }
   }
 

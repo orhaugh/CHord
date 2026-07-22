@@ -74,14 +74,11 @@ public final class BlockReader {
     for (int i = 0; i < columns; i++) {
       String name = in.readString();
       String typeName = in.readString(context.limits().maxTypeNameLength());
+      boolean sparse = false;
       if (ProtocolFeature.CUSTOM_SERIALIZATION.enabledFor(context.negotiatedRevision())) {
         int hasCustom = in.readUInt8();
         if (hasCustom != 0) {
-          throw new UnsupportedClickHouseTypeException(
-              "Column \""
-                  + name
-                  + "\" uses custom serialisation (sparse or related), which CHord does not"
-                  + " support yet (Phase 6). Reading cannot continue safely.");
+          sparse = readSparseKind(in, name);
         }
       }
       ClickHouseType type;
@@ -92,9 +89,36 @@ public final class BlockReader {
       } catch (ChordTypeException e) {
         throw new ChordTypeException("Column \"" + name + "\": " + e.getMessage());
       }
-      Column column = ColumnReader.read(in, type, rows, context);
+      Column column =
+          sparse && rows > 0
+              ? ColumnReader.readSparse(in, type, rows, context)
+              : ColumnReader.read(in, type, rows, context);
       decoded.add(new Block.NamedColumn(name, column));
     }
     return new Block(info, rows, decoded);
+  }
+
+  /**
+   * Reads the serialisation kind byte of a column with custom serialisation, mirroring {@code
+   * SerializationInfo::deserializeFromKindsBinary}: 0 default, 1 sparse; the detached, replicated
+   * and combination stacks are inter server forms that fail explicitly.
+   */
+  private static boolean readSparseKind(WireReader in, String name) {
+    int kind = in.readUInt8();
+    return switch (kind) {
+      case 0 -> false;
+      case 1 -> true;
+      case 2, 3, 4, 5 ->
+          throw new UnsupportedClickHouseTypeException(
+              "Column \""
+                  + name
+                  + "\" uses serialisation kind "
+                  + kind
+                  + " (detached, replicated or a combination), which servers use between"
+                  + " themselves and CHord does not decode. Reading cannot continue safely.");
+      default ->
+          throw new UnsupportedClickHouseTypeException(
+              "Column \"" + name + "\" declares unknown serialisation kind " + kind);
+    };
   }
 }

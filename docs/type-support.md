@@ -33,13 +33,13 @@ blocks), JDBC (mapping in the JDBC adapter), Object (row object mapping).
 | Tuple(...), named tuples | Yes | Yes | Yes | Planned (7) | Planned (7) | Immutable typed tuple |
 | Map(K, V) | Yes | Yes | Yes | Planned (7) | Planned (7) | Wire order preserved |
 | Nested | Yes | No (flattened by the server in results) | No (insert via the flattened Array subcolumns) | No | Planned (7) | |
-| LowCardinality(T) | Yes | Planned (6) | Planned (6) | Planned (7) | Planned (7) | Dictionary index validation |
+| LowCardinality(T) | Yes | Yes | Yes | Planned (7) | Planned (7) | Dictionary and index validation; NULL in slot zero for nullable inner types |
 | SimpleAggregateFunction aliases | Yes | Yes (as the inner type) | Yes (as the inner type) | No | No | Alias to inner type |
 | AggregateFunction states | Yes | No (explicit rejection) | No | No | No | Opaque representation or explicit rejection |
-| Geometry aliases (Point, Ring, Polygon, MultiPolygon, LineString, MultiLineString) | Yes | Yes (as their native tuple and array shapes) | Planned (6) | No | No | Native representations of nested types |
-| Variant | Yes | Planned (6) | Planned (6) | No | Planned (8) | Discriminator validation |
-| Dynamic | Yes | Planned (6) | Planned (6) | No | Planned (8) | V2 serialisation |
-| JSON | Yes | Planned (6) | Planned (6) | No | Planned (8) | Documented serialisation modes only |
+| Geometry aliases (Point, Ring, Polygon, MultiPolygon, LineString, MultiLineString) | Yes | Yes (as their native tuple and array shapes) | Yes (as their native shapes) | No | No | Native representations of nested types |
+| Variant | Yes | Yes | No (write the concrete type) | No | Planned (8) | Basic and compact discriminator modes; discriminator validation |
+| Dynamic | Yes | Yes | No (write a concrete type) | No | Planned (8) | V1 and V2 structure; shared variant rows fail explicitly on access, raw bytes exposed |
+| JSON | Yes | Yes | No (explicit rejection) | No | Planned (8) | V1 and V2 object serialisation; typed and dynamic paths decoded, shared data as raw values |
 | QBit and newly introduced types | No (explicit rejection) | No | No | No | No | Explicit `UnsupportedClickHouseTypeException` planned rather than guessing |
 
 Rules that govern this table:
@@ -52,5 +52,7 @@ Rules that govern this table:
   and back quoted tuple elements, timezone parameters, precision and scale, whitespace variants,
   geometry aliases and malformed input, with configurable nesting and size limits, and is
   round trip property tested.
-- Columns using custom serialisation metadata (sparse and related forms, revision 54454) are
-  rejected explicitly before any value bytes are consumed, until Phase 6.
+- Columns using custom serialisation metadata (revision 54454) decode for the default and
+  sparse kinds, sparse columns materialising into full columns; the detached, replicated and
+  combination kind stacks are inter server forms that fail explicitly before any value bytes are
+  consumed.

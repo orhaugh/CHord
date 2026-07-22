@@ -18,6 +18,7 @@ package io.github.orhaugh.chord.codec.column;
 import io.github.orhaugh.chord.ChordProtocolException;
 import io.github.orhaugh.chord.codec.UnsupportedClickHouseTypeException;
 import io.github.orhaugh.chord.codec.block.DecodeContext;
+import io.github.orhaugh.chord.codec.column.Serializations.Prefix;
 import io.github.orhaugh.chord.codec.type.ClickHouseType;
 import io.github.orhaugh.chord.codec.type.ClickHouseType.AggregateFunctionType;
 import io.github.orhaugh.chord.codec.type.ClickHouseType.ArrayType;
@@ -72,6 +73,21 @@ public final class ColumnReader {
    * @return the decoded column
    */
   public static Column read(WireReader in, ClickHouseType type, int rows, DecodeContext context) {
+    if (rows == 0) {
+      // Zero row columns carry no data and no prefix on the wire, mirroring NativeReader,
+      // which skips readData entirely for empty blocks such as INSERT schema headers.
+      return readBody(in, type, 0, context, Serializations.NONE);
+    }
+    Prefix prefix = Serializations.readPrefix(in, type, context);
+    return readBody(in, type, rows, context, prefix);
+  }
+
+  /**
+   * Reads a column body with an already read bulk state prefix. Containers pass the matching child
+   * prefixes down; the revision gated serialisations consume their structure state.
+   */
+  static Column readBody(
+      WireReader in, ClickHouseType type, int rows, DecodeContext context, Prefix prefix) {
     return switch (type) {
       case IntegerType t -> readInteger(in, t, rows);
       case BoolType t -> Columns.bool(t, readBytes(in, rows));
@@ -102,23 +118,23 @@ public final class ColumnReader {
               rows);
       case IntervalType t -> new Columns.IntervalColumn(t, readLongs(in, rows));
       case NothingType t -> readNothing(in, t, rows);
-      case NullableType t -> readNullable(in, t, rows, context);
-      case ArrayType t -> readArray(in, t, rows, context);
-      case TupleType t -> readTuple(in, t, rows, context);
-      case MapType t -> readMap(in, t, rows, context);
-      case SimpleAggregateFunctionType t -> read(in, t.inner(), rows, context);
-      case LowCardinalityType t ->
-          throw new UnsupportedClickHouseTypeException(
-              "LowCardinality decoding is not supported yet (Phase 6): " + t.name());
+      case NullableType t -> readNullable(in, t, rows, context, prefix);
+      case ArrayType t -> readArray(in, t, rows, context, prefix);
+      case TupleType t -> readTuple(in, t, rows, context, prefix);
+      case MapType t -> readMap(in, t, rows, context, prefix);
+      case SimpleAggregateFunctionType t -> readBody(in, t.inner(), rows, context, prefix);
+      case LowCardinalityType t -> Serializations.readLowCardinality(in, t, rows, context);
       case VariantType t ->
-          throw new UnsupportedClickHouseTypeException(
-              "Variant decoding is not supported yet (Phase 6): " + t.name());
+          Serializations.readVariant(
+              in, t, t.alternatives(), rows, context, variantPrefix(prefix, t, rows, context));
       case DynamicType t ->
-          throw new UnsupportedClickHouseTypeException(
-              "Dynamic decoding is not supported yet (Phase 6): " + t.name());
+          rows == 0
+              ? emptyDynamic(in, t, context)
+              : Serializations.readDynamic(in, t, rows, context, (Prefix.Dynamic) prefix);
       case JsonType t ->
-          throw new UnsupportedClickHouseTypeException(
-              "JSON decoding is not supported yet (Phase 6): " + t.name());
+          rows == 0
+              ? emptyJson(in, t, context)
+              : Serializations.readJson(in, t, rows, context, (Prefix.Json) prefix);
       case AggregateFunctionType t ->
           throw new UnsupportedClickHouseTypeException(
               "AggregateFunction states are opaque and not decodable: " + t.name());
@@ -233,33 +249,114 @@ public final class ColumnReader {
   }
 
   private static Column readNullable(
-      WireReader in, NullableType type, int rows, DecodeContext context) {
+      WireReader in, NullableType type, int rows, DecodeContext context, Prefix prefix) {
     byte[] nullMap = readBytes(in, rows);
-    Column inner = read(in, type.inner(), rows, context);
+    Column inner = readBody(in, type.inner(), rows, context, childPrefix(prefix, 0));
     return new Columns.NullableColumn(type, nullMap, inner);
   }
 
-  private static Column readArray(WireReader in, ArrayType type, int rows, DecodeContext context) {
+  private static Column readArray(
+      WireReader in, ArrayType type, int rows, DecodeContext context, Prefix prefix) {
     long[] offsets = readOffsets(in, rows, context);
     int total = offsets.length == 0 ? 0 : (int) offsets[offsets.length - 1];
-    Column elements = read(in, type.element(), total, context);
+    Column elements = readBody(in, type.element(), total, context, childPrefix(prefix, 0));
     return new Columns.ArrayColumn(type, offsets, elements);
   }
 
-  private static Column readTuple(WireReader in, TupleType type, int rows, DecodeContext context) {
+  private static Column readTuple(
+      WireReader in, TupleType type, int rows, DecodeContext context, Prefix prefix) {
     Column[] elements = new Column[type.elements().size()];
     for (int i = 0; i < elements.length; i++) {
-      elements[i] = read(in, type.elements().get(i).type(), rows, context);
+      elements[i] =
+          readBody(in, type.elements().get(i).type(), rows, context, childPrefix(prefix, i));
     }
     return new Columns.TupleColumn(type, elements, rows);
   }
 
-  private static Column readMap(WireReader in, MapType type, int rows, DecodeContext context) {
+  private static Column readMap(
+      WireReader in, MapType type, int rows, DecodeContext context, Prefix prefix) {
     long[] offsets = readOffsets(in, rows, context);
     int total = offsets.length == 0 ? 0 : (int) offsets[offsets.length - 1];
-    Column keys = read(in, type.key(), total, context);
-    Column values = read(in, type.value(), total, context);
+    Column keys = readBody(in, type.key(), total, context, childPrefix(prefix, 0));
+    Column values = readBody(in, type.value(), total, context, childPrefix(prefix, 1));
     return new Columns.MapColumn(type, offsets, keys, values);
+  }
+
+  /**
+   * Reads a sparse column: the nested prefix, the offsets of non default rows, and the non default
+   * values, materialised into a full column of the declared type.
+   *
+   * @param in reader positioned at the column data
+   * @param type the parsed column type
+   * @param rows number of rows in the block
+   * @param context decode limits and session information
+   * @return the materialised column
+   */
+  public static Column readSparse(
+      WireReader in, ClickHouseType type, int rows, DecodeContext context) {
+    return Serializations.readSparse(in, type, rows, context);
+  }
+
+  /** Returns the i-th child of a container prefix, or none when no prefix applies. */
+  private static Prefix childPrefix(Prefix prefix, int index) {
+    return prefix instanceof Prefix.Nested nested
+        ? nested.children().get(index)
+        : Serializations.NONE;
+  }
+
+  /**
+   * Resolves the variant prefix for a body read: the prefix from the wire when rows exist, or a
+   * synthetic basic mode prefix for the empty case, which reads no bytes.
+   */
+  private static Prefix.Variant variantPrefix(
+      Prefix prefix, VariantType type, int rows, DecodeContext context) {
+    if (prefix instanceof Prefix.Variant variant) {
+      return variant;
+    }
+    if (rows != 0) {
+      throw new ChordProtocolException("Variant column body read without its prefix");
+    }
+    java.util.List<Prefix> none = new java.util.ArrayList<>(type.alternatives().size());
+    for (int i = 0; i < type.alternatives().size(); i++) {
+      none.add(Serializations.NONE);
+    }
+    return new Prefix.Variant(0, none);
+  }
+
+  /** Builds an empty Dynamic column without touching the stream. */
+  private static Column emptyDynamic(WireReader in, DynamicType type, DecodeContext context) {
+    Columns.VariantColumn variant =
+        new Columns.VariantColumn(
+            type,
+            new byte[0],
+            java.util.List.of(
+                readBody(
+                    in,
+                    new io.github.orhaugh.chord.codec.type.ClickHouseType.StringType(),
+                    0,
+                    context,
+                    Serializations.NONE)),
+            new int[0]);
+    return new Columns.DynamicColumn(type, variant, 0, java.util.List.of());
+  }
+
+  /** Builds an empty JSON column without touching the stream. */
+  private static Column emptyJson(WireReader in, JsonType type, DecodeContext context) {
+    java.util.Map<String, ClickHouseType> typedPathTypes =
+        JsonTypeArguments.typedPaths(
+            type, context.limits().maxTypeNameLength(), context.limits().maxTypeDepth());
+    java.util.Map<String, Column> typedPaths = new java.util.LinkedHashMap<>();
+    for (java.util.Map.Entry<String, ClickHouseType> entry : typedPathTypes.entrySet()) {
+      typedPaths.put(
+          entry.getKey(), readBody(in, entry.getValue(), 0, context, Serializations.NONE));
+    }
+    io.github.orhaugh.chord.codec.type.ClickHouseType.MapType sharedType =
+        new io.github.orhaugh.chord.codec.type.ClickHouseType.MapType(
+            new io.github.orhaugh.chord.codec.type.ClickHouseType.StringType(),
+            new io.github.orhaugh.chord.codec.type.ClickHouseType.StringType());
+    Columns.MapColumn sharedData =
+        (Columns.MapColumn) readBody(in, sharedType, 0, context, Serializations.NONE);
+    return new Columns.JsonColumn(type, 0, typedPaths, java.util.Map.of(), sharedData);
   }
 
   private static long[] readOffsets(WireReader in, int rows, DecodeContext context) {

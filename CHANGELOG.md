@@ -8,6 +8,20 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ### Added
 
+- Advanced serialisations. LowCardinality columns decode and encode (dictionary and additional
+  keys layout with the default slot, index width validation, NULL in slot zero for nullable
+  inner types), so INSERT into LowCardinality tables works end to end. Sparse columns (custom
+  serialisation kind 1, revision 54454) decode and materialise into full columns, including
+  Nullable sparse from revision 54483; the detached, replicated and combination kind stacks are
+  inter server forms that fail explicitly. Variant columns decode in basic and compact
+  discriminator modes with values in name sorted global order. Dynamic columns decode with V1
+  and V2 structure prefixes; rows that overflowed into the shared variant fail explicitly on
+  typed access with raw bytes exposed. JSON columns decode with V1 and V2 object serialisation:
+  typed paths from the type declaration, dynamic paths as Dynamic columns, and shared data
+  entries exposed as raw values. Wire layouts were validated against Native format files
+  produced by real servers and against live servers across 25.8, 26.3 and 26.6; building
+  Variant, Dynamic or JSON values client side is rejected explicitly.
+
 - Connection pooling and failover. `ConnectionPool` leases connections with a hard size bound,
   fair acquire with timeout, idle validation by protocol ping, maximum lifetime and idle
   eviction, leak diagnostics carrying the acquire site stack trace, and graceful close; a lease

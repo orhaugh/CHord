@@ -34,7 +34,7 @@ protocol, implemented against the current ClickHouse sources and tested against 
 | Cancel packet, per request timeouts, cancellation draining, cancel grace | Done, integration tested |
 | Progress and server log listeners, insert deduplication token | Done, integration tested |
 | JFR events (Connect, Query, Insert, PoolAcquire) and Micrometer pool gauges | Done |
-| LowCardinality, Variant, Dynamic, JSON serialisations | Planned, Phase 6 |
+| LowCardinality read and write, sparse column decode, Variant, Dynamic and JSON decode | Done, golden tested against real server output and integration tested |
 | JDBC adapter | Planned, Phase 7 |
 
 The full roadmap with per feature milestones lives in

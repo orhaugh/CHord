@@ -1090,4 +1090,306 @@ public final class Columns {
   static Column uint64(ClickHouseType type, long[] values) {
     return new UInt64Column(type, values);
   }
+
+  /**
+   * LowCardinality column: a dictionary of distinct values plus one dictionary index per row.
+   *
+   * <p>Slot 0 of the dictionary is the inner type's default value, or NULL when the inner type is
+   * nullable, mirroring the server's dictionary layout. {@link #objectAt(int)} resolves through the
+   * dictionary transparently, so consumers see plain values.
+   */
+  public static final class LowCardinalityColumn extends Base {
+    private final Column dictionary;
+    private final int[] indexes;
+    private final boolean nullable;
+
+    LowCardinalityColumn(ClickHouseType type, Column dictionary, int[] indexes, boolean nullable) {
+      super(type, indexes.length);
+      this.dictionary = dictionary;
+      this.indexes = indexes;
+      this.nullable = nullable;
+    }
+
+    /**
+     * Returns the dictionary of distinct values, decoded as the non nullable inner type; slot 0
+     * holds the default value and represents NULL when the column is nullable.
+     *
+     * @return the dictionary column
+     */
+    public Column dictionary() {
+      return dictionary;
+    }
+
+    /**
+     * Returns the dictionary index of a row.
+     *
+     * @param row row index
+     * @return the dictionary slot the row references
+     */
+    public int indexAt(int row) {
+      checkRow(row);
+      return indexes[row];
+    }
+
+    @Override
+    public boolean isNullAt(int row) {
+      checkRow(row);
+      return nullable && indexes[row] == 0;
+    }
+
+    @Override
+    public Object objectAt(int row) {
+      checkRow(row);
+      if (nullable && indexes[row] == 0) {
+        return null;
+      }
+      return dictionary.objectAt(indexes[row]);
+    }
+
+    int[] rawIndexes() {
+      return indexes;
+    }
+
+    boolean nullableDictionary() {
+      return nullable;
+    }
+  }
+
+  /**
+   * Variant column: one global discriminator per row selecting among the variant columns, with 255
+   * marking NULL. {@link #objectAt(int)} resolves the discriminator transparently.
+   */
+  public static final class VariantColumn extends Base {
+    /** The wire value marking a NULL row. */
+    public static final int NULL_DISCRIMINATOR = 255;
+
+    private final byte[] discriminators;
+    private final List<Column> variants;
+    private final int[] positionsInVariant;
+
+    VariantColumn(
+        ClickHouseType type, byte[] discriminators, List<Column> variants, int[] positions) {
+      super(type, discriminators.length);
+      this.discriminators = discriminators;
+      this.variants = List.copyOf(variants);
+      this.positionsInVariant = positions;
+    }
+
+    /**
+     * Returns the global discriminator of a row: the index into {@link #variants()}, or {@link
+     * #NULL_DISCRIMINATOR} for a NULL row.
+     *
+     * @param row row index
+     * @return the discriminator
+     */
+    public int discriminatorAt(int row) {
+      checkRow(row);
+      return discriminators[row] & 0xFF;
+    }
+
+    /**
+     * Returns the per variant value columns in global discriminator order.
+     *
+     * @return the variant columns
+     */
+    public List<Column> variants() {
+      return variants;
+    }
+
+    @Override
+    public boolean isNullAt(int row) {
+      return discriminatorAt(row) == NULL_DISCRIMINATOR;
+    }
+
+    @Override
+    public Object objectAt(int row) {
+      int discriminator = discriminatorAt(row);
+      if (discriminator == NULL_DISCRIMINATOR) {
+        return null;
+      }
+      return variants.get(discriminator).objectAt(positionsInVariant[row]);
+    }
+
+    int positionInVariantAt(int row) {
+      checkRow(row);
+      return positionsInVariant[row];
+    }
+  }
+
+  /**
+   * Dynamic column: per row values of varying types, carried as a Variant over the types the block
+   * declared plus the shared variant for overflow types.
+   *
+   * <p>Rows whose type overflowed into the shared variant are not decoded in this phase: {@link
+   * #objectAt(int)} fails explicitly for them and {@link #sharedVariantRawAt(int)} exposes the raw
+   * bytes (a binary encoded type followed by the binary value).
+   */
+  public static final class DynamicColumn extends Base {
+    private final VariantColumn variant;
+    private final int sharedVariantDiscriminator;
+    private final List<ClickHouseType> dynamicTypes;
+
+    DynamicColumn(
+        ClickHouseType type,
+        VariantColumn variant,
+        int sharedVariantDiscriminator,
+        List<ClickHouseType> dynamicTypes) {
+      super(type, variant.size());
+      this.variant = variant;
+      this.sharedVariantDiscriminator = sharedVariantDiscriminator;
+      this.dynamicTypes = List.copyOf(dynamicTypes);
+    }
+
+    /**
+     * Returns the concrete types this column's block declared, in global discriminator order and
+     * excluding the shared variant.
+     *
+     * @return the dynamic types
+     */
+    public List<ClickHouseType> dynamicTypes() {
+      return dynamicTypes;
+    }
+
+    /**
+     * Returns the name of the concrete type of a row, empty for NULL rows.
+     *
+     * @param row row index
+     * @return the type name, or empty
+     */
+    public java.util.Optional<String> typeNameAt(int row) {
+      int discriminator = variant.discriminatorAt(row);
+      if (discriminator == VariantColumn.NULL_DISCRIMINATOR) {
+        return java.util.Optional.empty();
+      }
+      if (discriminator == sharedVariantDiscriminator) {
+        return java.util.Optional.of("SharedVariant");
+      }
+      return java.util.Optional.of(variant.variants().get(discriminator).type().name());
+    }
+
+    /**
+     * Returns the raw shared variant bytes of a row: a binary encoded type followed by the value in
+     * single value binary format. Only valid for rows whose {@link #typeNameAt(int)} is {@code
+     * SharedVariant}.
+     *
+     * @param row row index
+     * @return the raw bytes
+     */
+    public byte[] sharedVariantRawAt(int row) {
+      int discriminator = variant.discriminatorAt(row);
+      if (discriminator != sharedVariantDiscriminator) {
+        throw new IllegalArgumentException("Row " + row + " is not stored in the shared variant");
+      }
+      StringColumn shared = (StringColumn) variant.variants().get(sharedVariantDiscriminator);
+      return shared.bytesAt(variant.positionInVariantAt(row));
+    }
+
+    @Override
+    public boolean isNullAt(int row) {
+      return variant.isNullAt(row);
+    }
+
+    @Override
+    public Object objectAt(int row) {
+      int discriminator = variant.discriminatorAt(row);
+      if (discriminator == sharedVariantDiscriminator) {
+        throw new io.github.orhaugh.chord.ChordTypeException(
+            "Row "
+                + row
+                + " of this Dynamic column overflowed into the shared variant; its value is not"
+                + " decoded in this phase. Use sharedVariantRawAt for the raw bytes.");
+      }
+      return variant.objectAt(row);
+    }
+  }
+
+  /**
+   * A shared data value of a JSON column that CHord does not decode: the raw bytes carry a binary
+   * encoded type followed by the value in single value binary format.
+   *
+   * @param bytes the raw type and value bytes
+   */
+  public record RawJsonValue(byte[] bytes) {
+    /** Copies the array defensively. */
+    public RawJsonValue {
+      bytes = bytes.clone();
+    }
+
+    /**
+     * Returns a copy of the raw bytes.
+     *
+     * @return the bytes
+     */
+    @Override
+    public byte[] bytes() {
+      return bytes.clone();
+    }
+  }
+
+  /**
+   * JSON column: typed paths from the type declaration, dynamic paths discovered per block, and
+   * shared data for paths beyond the dynamic path budget.
+   *
+   * <p>{@link #objectAt(int)} returns a map from path to value: typed paths always present, dynamic
+   * paths present when non NULL, shared data entries present as {@link RawJsonValue}.
+   */
+  public static final class JsonColumn extends Base {
+    private final Map<String, Column> typedPaths;
+    private final Map<String, DynamicColumn> dynamicPaths;
+    private final MapColumn sharedData;
+
+    JsonColumn(
+        ClickHouseType type,
+        int rows,
+        Map<String, Column> typedPaths,
+        Map<String, DynamicColumn> dynamicPaths,
+        MapColumn sharedData) {
+      super(type, rows);
+      this.typedPaths = new LinkedHashMap<>(typedPaths);
+      this.dynamicPaths = new LinkedHashMap<>(dynamicPaths);
+      this.sharedData = sharedData;
+    }
+
+    /**
+     * Returns the typed path columns declared by the JSON type, in sorted path order.
+     *
+     * @return path to column
+     */
+    public Map<String, Column> typedPaths() {
+      return java.util.Collections.unmodifiableMap(typedPaths);
+    }
+
+    /**
+     * Returns the dynamic path columns this block carried, in sorted path order.
+     *
+     * @return path to column
+     */
+    public Map<String, DynamicColumn> dynamicPaths() {
+      return java.util.Collections.unmodifiableMap(dynamicPaths);
+    }
+
+    @Override
+    public Object objectAt(int row) {
+      checkRow(row);
+      Map<String, Object> values = new LinkedHashMap<>();
+      for (Map.Entry<String, Column> entry : typedPaths.entrySet()) {
+        values.put(entry.getKey(), entry.getValue().objectAt(row));
+      }
+      for (Map.Entry<String, DynamicColumn> entry : dynamicPaths.entrySet()) {
+        DynamicColumn column = entry.getValue();
+        if (!column.isNullAt(row)) {
+          values.put(entry.getKey(), column.objectAt(row));
+        }
+      }
+      StringColumn sharedKeys = (StringColumn) sharedData.rawKeys();
+      StringColumn sharedValues = (StringColumn) sharedData.rawValues();
+      long[] offsets = sharedData.rawOffsets();
+      int start = row == 0 ? 0 : (int) offsets[row - 1];
+      int end = (int) offsets[row];
+      for (int i = start; i < end; i++) {
+        values.put(sharedKeys.stringAt(i), new RawJsonValue(sharedValues.bytesAt(i)));
+      }
+      return values;
+    }
+  }
 }

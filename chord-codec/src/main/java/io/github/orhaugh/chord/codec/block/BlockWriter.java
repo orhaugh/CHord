@@ -58,7 +58,11 @@ public final class BlockWriter {
       if (ProtocolFeature.CUSTOM_SERIALIZATION.enabledFor(negotiatedRevision)) {
         out.writeUInt8(0); // plain serialisation, never sparse
       }
-      ColumnWriter.write(out, column.column());
+      if (block.rows() > 0) {
+        // Empty blocks carry no column data and no prefix, mirroring NativeWriter.
+        ColumnWriter.writePrefix(out, column.column());
+        ColumnWriter.write(out, column.column());
+      }
     }
   }
 }

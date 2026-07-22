@@ -108,6 +108,31 @@ travel as ClickHouse compressed frames:
 The checksum implementation is a pure Java port of CityHash 1.0.2 (the exact historical version
 ClickHouse pins), cross validated against frames produced by the real `clickhouse-compressor`.
 
+### Revision gated serialisations (implemented and tested)
+
+Wire layouts mirror `SerializationLowCardinality`, `SerializationSparse`,
+`SerializationVariant`, `SerializationDynamic` and `SerializationObject`, in the single stream
+layout of the Native format, validated against Native files produced by real servers and against
+live servers in integration tests.
+
+- **Bulk state prefixes**: each non empty column's data begins with its serialisation's prefix
+  (containers recurse in substream order); zero row columns carry no data and no prefix.
+- **LowCardinality** (read and write): keys version 1, additional keys mode with the dictionary
+  and its default slot inline per block, index width validated against the dictionary size.
+- **Sparse** (read, kind byte 1 at 54454+): varint gaps locating non default rows, values
+  through the nested serialisation, materialised into full columns; Nullable columns can arrive
+  sparse from revision 54483. Kind stacks other than default and sparse (detached, replicated,
+  combination) are inter server forms and fail explicitly.
+- **Variant** (read): discriminators mode from the prefix (basic and compact both decode),
+  global discriminator 255 as NULL, per variant columns in the name sorted global order.
+- **Dynamic** (read): structure versions V1 and V2 (types as names; the versions servers send
+  over TCP), the synthesised variant including the shared variant sorted by name. Rows that
+  overflowed into the shared variant fail explicitly on access, with raw bytes exposed.
+- **JSON** (read): object serialisation versions V1 and V2, typed paths from the type
+  declaration in sorted path order, dynamic paths as Dynamic columns, shared data as
+  Map(String, String) with values exposed raw. Writing Variant, Dynamic or JSON values client
+  side is rejected explicitly.
+
 ### Deliberate strictness deviations
 
 - VarUInt decoding accepts non minimal encodings (as the server does) but rejects a tenth byte
@@ -171,7 +196,7 @@ CHord raises `ChordProtocolException` and the connection is closed, never reused
 |---|---|---|
 | ClientInfo | every field to revision 54488, including quota key, distributed depth, OpenTelemetry flag, parallel replicas triple, script numbers, JWT flag, client agent, internal flag and current roles flag | Write: yes, byte level golden tests at revisions 54470 and 54488 |
 | BlockInfo | field framed metadata: overflow flag, bucket number, out of order buckets (54480), unknown fields poison the connection | Read and write: yes |
-| Native block | column and row counts, per column name, type name, custom serialisation flag (54454), column data | Read and write: yes for all supported types, round trip tested; custom or sparse serialisation is rejected explicitly until Phase 6 |
+| Native block | column and row counts, per column name, type name, custom serialisation flag and kind (54454), bulk state prefixes, column data | Read and write: yes for all supported types, round trip tested; sparse columns (54465, nullable from 54483) decode and materialise; detached, replicated and combination kind stacks are inter server forms rejected explicitly |
 | Query settings | STRINGS_WITH_FLAGS name and string value pairs, empty name terminated | Write: yes |
 | Query parameters | custom flagged settings entries carrying quoted field dumps (54459) | Write: yes |
 | ProfileInfo | rows, blocks, bytes, limit flags, rows before limit and aggregation (54469) | Read: yes |

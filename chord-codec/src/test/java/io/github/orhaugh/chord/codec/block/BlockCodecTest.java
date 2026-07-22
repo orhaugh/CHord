@@ -438,38 +438,63 @@ class BlockCodecTest {
   }
 
   @Test
-  void rejectsCustomSerialisationExplicitly() {
+  void sparseColumnsDecodeThroughTheKindByte() {
     byte[] block =
         built(
             w -> {
               writeDefaultInfo(w);
               w.writeVarUInt(1);
-              w.writeVarUInt(1);
+              w.writeVarUInt(4);
               w.writeString("sparse");
               w.writeString("UInt64");
-              w.writeUInt8(1);
+              w.writeUInt8(1); // has custom serialisation
+              w.writeUInt8(1); // kind stack {Default, Sparse}
+              w.writeVarUInt(1); // one default, then a value at row 1
+              w.writeVarUInt(2 | (1L << 62)); // two trailing defaults
+              w.writeInt64Le(77);
             });
-    assertThatThrownBy(() -> decode(block))
-        .isInstanceOf(UnsupportedClickHouseTypeException.class)
-        .hasMessageContaining("custom serialisation")
-        .hasMessageContaining("sparse");
+    Block decoded = decode(block);
+    Columns.UInt64Column column = (Columns.UInt64Column) decoded.column(0);
+    assertThat(column.rawLongAt(0)).isZero();
+    assertThat(column.rawLongAt(1)).isEqualTo(77);
+    assertThat(column.rawLongAt(2)).isZero();
+    assertThat(column.rawLongAt(3)).isZero();
   }
 
   @Test
-  void rejectsLowCardinalityDecodeExplicitly() {
+  void rejectsInterServerSerialisationKindsExplicitly() {
     byte[] block =
         built(
             w -> {
               writeDefaultInfo(w);
               w.writeVarUInt(1);
               w.writeVarUInt(1);
-              w.writeString("lc");
-              w.writeString("LowCardinality(String)");
-              w.writeUInt8(0);
+              w.writeString("repl");
+              w.writeString("UInt64");
+              w.writeUInt8(1); // has custom serialisation
+              w.writeUInt8(4); // kind stack {Default, Replicated}
             });
     assertThatThrownBy(() -> decode(block))
         .isInstanceOf(UnsupportedClickHouseTypeException.class)
-        .hasMessageContaining("Phase 6");
+        .hasMessageContaining("kind 4");
+  }
+
+  @Test
+  void rejectsUnknownSerialisationKindsExplicitly() {
+    byte[] block =
+        built(
+            w -> {
+              writeDefaultInfo(w);
+              w.writeVarUInt(1);
+              w.writeVarUInt(1);
+              w.writeString("mystery");
+              w.writeString("UInt64");
+              w.writeUInt8(1);
+              w.writeUInt8(9);
+            });
+    assertThatThrownBy(() -> decode(block))
+        .isInstanceOf(UnsupportedClickHouseTypeException.class)
+        .hasMessageContaining("unknown serialisation kind 9");
   }
 
   @Test

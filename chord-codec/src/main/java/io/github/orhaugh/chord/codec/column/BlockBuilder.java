@@ -75,6 +75,24 @@ public final class BlockBuilder {
   }
 
   /**
+   * Creates a builder over bare column types with generated names, for callers assembling columns
+   * outside an INSERT schema, such as sparse materialisation.
+   *
+   * @param types one entry per column
+   * @return a builder with one appender per column
+   */
+  static BlockBuilder forColumnTypes(
+      List<io.github.orhaugh.chord.codec.type.ClickHouseType> types) {
+    List<String> names = new ArrayList<>(types.size());
+    List<Appender> appenders = new ArrayList<>(types.size());
+    for (int i = 0; i < types.size(); i++) {
+      names.add("c" + i);
+      appenders.add(appenderFor(types.get(i)));
+    }
+    return new BlockBuilder(names, appenders);
+  }
+
+  /**
    * Appends one row.
    *
    * @param values one value per column, in schema order; {@code null} only for Nullable columns
@@ -190,20 +208,22 @@ public final class BlockBuilder {
           new DelegatingAppender(t, appenderFor(t.inner()));
       case ClickHouseType.NothingType t ->
           throw new UnsupportedClickHouseTypeException("Cannot insert values of type Nothing");
-      case ClickHouseType.LowCardinalityType t ->
-          throw new UnsupportedClickHouseTypeException(
-              "LowCardinality encoding is not supported yet (Phase 6): "
-                  + t.name()
-                  + ". Set low_cardinality_allow_in_native_format=0 or target the inner type.");
+      case ClickHouseType.LowCardinalityType t -> new LowCardinalityAppender(t);
       case ClickHouseType.VariantType t ->
           throw new UnsupportedClickHouseTypeException(
-              "Variant encoding is not supported yet (Phase 6): " + t.name());
+              "Building Variant values client side is not supported; write the concrete column"
+                  + " type instead: "
+                  + t.name());
       case ClickHouseType.DynamicType t ->
           throw new UnsupportedClickHouseTypeException(
-              "Dynamic encoding is not supported yet (Phase 6): " + t.name());
+              "Building Dynamic values client side is not supported; write a concrete column type"
+                  + " instead: "
+                  + t.name());
       case ClickHouseType.JsonType t ->
           throw new UnsupportedClickHouseTypeException(
-              "JSON encoding is not supported yet (Phase 6): " + t.name());
+              "Building JSON values client side is not supported; insert JSON text through a"
+                  + " String column with input format settings, or use HTTP formats: "
+                  + t.name());
       case ClickHouseType.AggregateFunctionType t ->
           throw new UnsupportedClickHouseTypeException(
               "AggregateFunction states cannot be built client side: " + t.name());
@@ -1253,6 +1273,61 @@ public final class BlockBuilder {
       size = 0;
       total = 0;
       return new Columns.MapColumn(type, exact, keys.finish(), values.finish());
+    }
+  }
+
+  /**
+   * Builds a LowCardinality column: values append through the inner type's appender with its full
+   * validation, and {@link #finish()} dictionary encodes the built values. Slot 0 of the dictionary
+   * is the inner default, representing NULL for nullable inner types, mirroring the server's
+   * dictionary layout.
+   */
+  private static final class LowCardinalityAppender implements Appender {
+    private final ClickHouseType.LowCardinalityType type;
+    private final Appender values;
+
+    LowCardinalityAppender(ClickHouseType.LowCardinalityType type) {
+      this.type = type;
+      this.values = appenderFor(type.inner());
+    }
+
+    @Override
+    public void append(Object value) {
+      values.append(value);
+    }
+
+    @Override
+    public void appendDefault() {
+      values.appendDefault();
+    }
+
+    @Override
+    public Column finish() {
+      Column full = values.finish();
+      boolean nullable = type.inner() instanceof ClickHouseType.NullableType;
+      ClickHouseType keyType =
+          type.inner() instanceof ClickHouseType.NullableType n ? n.inner() : type.inner();
+      Appender dictionary = appenderFor(keyType);
+      dictionary.appendDefault(); // slot 0: the default value, or NULL for nullable inner types
+      java.util.Map<Object, Integer> slots = new java.util.HashMap<>();
+      int[] indexes = new int[full.size()];
+      int nextSlot = 1;
+      for (int row = 0; row < full.size(); row++) {
+        Object value = full.objectAt(row);
+        if (value == null) {
+          indexes[row] = 0;
+          continue;
+        }
+        Object key = value instanceof byte[] bytes ? java.nio.ByteBuffer.wrap(bytes) : value;
+        Integer slot = slots.get(key);
+        if (slot == null) {
+          slot = nextSlot++;
+          slots.put(key, slot);
+          dictionary.append(value);
+        }
+        indexes[row] = slot;
+      }
+      return new Columns.LowCardinalityColumn(type, dictionary.finish(), indexes, nullable);
     }
   }
 

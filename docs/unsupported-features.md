@@ -72,14 +72,19 @@ What remains from the Phase 5 scope:
 | Micrometer timers for per operation latency | JFR events carry per operation timing today; registry timers need instrumentation hooks |
 | OpenTelemetry tracing spans | Metrics are reachable through Micrometer bridges; trace propagation (`opentelemetry_trace_parent`) is not implemented |
 
-## Phase 6: advanced serialisations
+## Phase 6 remainder: serialisation conveniences
+
+LowCardinality read and write, sparse decode (including nullable sparse), Variant, Dynamic and
+JSON decode shipped, validated against Native files from real servers and live integration
+tests. What remains from the Phase 6 scope:
 
 | Feature | Notes |
 |---|---|
-| LowCardinality, Variant, Dynamic, JSON | V2 Dynamic and JSON serialisation (revision 54473) |
-| Custom serialisation metadata (54454), sparse serialisation (54465, 54483) | |
-| Replicated serialisation (54482), parallel block marshalling (54478) | |
-| Binary type name encoding | |
+| Writing Variant, Dynamic and JSON values | Reads are supported; the client side value model for building them is future work |
+| Decoding shared variant and shared data values | Rows beyond a Dynamic column's type budget or a JSON column's path budget carry binary encoded type and value; CHord exposes the raw bytes and fails explicitly on typed access |
+| Replicated serialisation (54482) | An inter server column form; recognised and rejected explicitly |
+| Dynamic and JSON V3 and flattened serialisations | File format variants servers do not send over TCP; recognised and rejected explicitly |
+| Binary type name encoding | Only used by V3 prefixes and format settings CHord does not enable |
 
 ## Phase 7: JDBC
 
