@@ -65,4 +65,46 @@
     <Class name="~io\.github\.orhaugh\.chord\.client\.JfrEvents\$.*"/>
     <Bug pattern="URF_UNREAD_FIELD"/>
   </Match>
+
+  <!--
+    The JDBC API contract requires these accessors to return the owning objects:
+    ResultSet.getStatement, Statement.getConnection and DatabaseMetaData.getConnection
+    hand back the very instances the caller already holds references to.
+  -->
+  <Match>
+    <Or>
+      <And>
+        <Class name="io.github.orhaugh.chord.jdbc.ChordResultSet"/>
+        <Method name="getStatement"/>
+      </And>
+      <And>
+        <Class name="io.github.orhaugh.chord.jdbc.ChordDatabaseMetaData"/>
+        <Method name="getConnection"/>
+      </And>
+      <And>
+        <Class name="io.github.orhaugh.chord.jdbc.ChordStatement"/>
+        <Or>
+          <Method name="getConnection"/>
+          <Method name="getResultSet"/>
+        </Or>
+      </And>
+    </Or>
+    <Bug pattern="EI_EXPOSE_REP"/>
+  </Match>
+
+  <!--
+    JDBC dictates both spellings: DatabaseMetaData.getURL is spec mandated and getUrl is the
+    established DataSource bean property convention. The JDBC spec also defines getBytes to
+    return null for SQL NULL, not an empty array.
+  -->
+  <Match>
+    <Class name="io.github.orhaugh.chord.jdbc.ChordDataSource"/>
+    <Method name="getUrl"/>
+    <Bug pattern="NM_CONFUSING"/>
+  </Match>
+  <Match>
+    <Class name="io.github.orhaugh.chord.jdbc.ChordResultSet"/>
+    <Method name="getBytes"/>
+    <Bug pattern="PZLA_PREFER_ZERO_LENGTH_ARRAYS"/>
+  </Match>
 </FindBugsFilter>

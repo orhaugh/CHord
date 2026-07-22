@@ -8,6 +8,21 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ### Added
 
+- The JDBC 4.3 adapter (`chord-jdbc`). `jdbc:chord://host[:port][,host2...][/db][?params]` URLs
+  with strict parameter validation, service loader registration, and a plain `ChordDataSource`.
+  Connections are honestly transaction free; statements support query timeouts (mapped to the
+  native Cancel based deadline), cross thread `cancel()`, client side `setMaxRows` and update
+  counts from written rows. Prepared statements substitute bound values as escaped ClickHouse
+  literals at placeholders found outside strings, quoted identifiers and comments, and
+  recognise `INSERT INTO t [(cols)] VALUES (?, ...)` to batch through native blocks with server
+  schema validation. Result sets stream native blocks with lossless getter coercions (out of
+  range conversions raise SQLState 22003 instead of truncating). DatabaseMetaData answers
+  identity from the handshake and browses catalogs, tables, columns, primary keys and functions
+  through the system tables with client side JDBC type mapping. Server errors map to the JDBC
+  exception hierarchy with SQLStates and vendor codes, and the native retry classification
+  surfaces as transient versus non transient exception subtypes (ADR-0014). Features ClickHouse
+  does not have raise SQLFeatureNotSupportedException rather than silently degrading.
+
 - Advanced serialisations. LowCardinality columns decode and encode (dictionary and additional
   keys layout with the default slot, index width validation, NULL in slot zero for nullable
   inner types), so INSERT into LowCardinality tables works end to end. Sparse columns (custom

@@ -29,15 +29,13 @@
 
   <name>CHord JDBC</name>
   <description>
-    JDBC 4.3 adapter over the CHord native client. Implementation is scheduled for Phase 7; this
-    module carries no functionality yet, registers no driver and makes no support claims.
+    JDBC 4.3 adapter over the CHord native client: Driver, Connection, Statement,
+    PreparedStatement with native block batching, ResultSet, DatabaseMetaData and DataSource.
+    Features ClickHouse does not have raise SQLFeatureNotSupportedException honestly.
   </description>
 
   <properties>
     <chord.automatic.module.name>io.github.orhaugh.chord.jdbc</chord.automatic.module.name>
-    <!-- Placeholder module: not published until it carries real code (Phase 7). -->
-    <maven.deploy.skip>true</maven.deploy.skip>
-    <maven.javadoc.skip>true</maven.javadoc.skip>
   </properties>
 
   <dependencies>
@@ -45,17 +43,30 @@
       <groupId>io.github.orhaugh</groupId>
       <artifactId>chord-client</artifactId>
     </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.github.orhaugh</groupId>
+      <artifactId>chord-testkit</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
-
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.sonatype.central</groupId>
-        <artifactId>central-publishing-maven-plugin</artifactId>
-        <configuration>
-          <skipPublishing>true</skipPublishing>
-        </configuration>
-      </plugin>
-    </plugins>
-  </build>
 </project>

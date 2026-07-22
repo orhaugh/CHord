@@ -35,7 +35,7 @@ protocol, implemented against the current ClickHouse sources and tested against 
 | Progress and server log listeners, insert deduplication token | Done, integration tested |
 | JFR events (Connect, Query, Insert, PoolAcquire) and Micrometer pool gauges | Done |
 | LowCardinality read and write, sparse column decode, Variant, Dynamic and JSON decode | Done, golden tested against real server output and integration tested |
-| JDBC adapter | Planned, Phase 7 |
+| JDBC 4.3 adapter: Driver, DataSource, prepared statements with native block batching, honest metadata | Done, integration tested through DriverManager |
 
 The full roadmap with per feature milestones lives in
 [docs/unsupported-features.md](docs/unsupported-features.md). Protocol coverage is tracked in
@@ -172,7 +172,7 @@ A runnable version of this is in
 | `chord-transport` | Blocking TCP and TLS transports behind an SPI. |
 | `chord-client` | The client API: `NativeConnection` with handshake, ping, streaming SELECT (`QueryResult`) and streaming INSERT (`InsertStream`). |
 | `chord-observability` | The Micrometer binding for pool metrics. Per operation timing is emitted as JFR events by `chord-client` itself; OpenTelemetry is reachable through Micrometer registry bridges. |
-| `chord-jdbc` | JDBC 4.3 adapter over the native client. Placeholder until Phase 7. |
+| `chord-jdbc` | The JDBC 4.3 adapter over the native client: `jdbc:chord://` URLs, prepared statements that batch through native blocks, and metadata over the system tables. |
 | `chord-testkit` | Testcontainers fixture for ClickHouse with native port access. |
 | `chord-examples` | Runnable examples. Not published. |
 | `chord-benchmarks` | JMH benchmarks, built with `-Pbenchmarks`. Not published. |

@@ -76,20 +76,32 @@ public final class BlockBuilder {
 
   /**
    * Creates a builder over bare column types with generated names, for callers assembling columns
-   * outside an INSERT schema, such as sparse materialisation.
+   * outside an INSERT schema, such as sparse materialisation or locally built result sets.
    *
    * @param types one entry per column
    * @return a builder with one appender per column
    */
-  static BlockBuilder forColumnTypes(
+  public static BlockBuilder forColumnTypes(
       List<io.github.orhaugh.chord.codec.type.ClickHouseType> types) {
-    List<String> names = new ArrayList<>(types.size());
+    return forColumnTypes(types, null);
+  }
+
+  /**
+   * Creates a builder over bare column types with explicit names.
+   *
+   * @param types one entry per column
+   * @param names column names, or {@code null} to generate positional names
+   * @return a builder with one appender per column
+   */
+  public static BlockBuilder forColumnTypes(
+      List<io.github.orhaugh.chord.codec.type.ClickHouseType> types, List<String> names) {
+    List<String> columnNames = new ArrayList<>(types.size());
     List<Appender> appenders = new ArrayList<>(types.size());
     for (int i = 0; i < types.size(); i++) {
-      names.add("c" + i);
+      columnNames.add(names != null ? names.get(i) : "c" + i);
       appenders.add(appenderFor(types.get(i)));
     }
-    return new BlockBuilder(names, appenders);
+    return new BlockBuilder(columnNames, appenders);
   }
 
   /**

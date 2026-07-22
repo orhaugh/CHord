@@ -86,11 +86,19 @@ tests. What remains from the Phase 6 scope:
 | Dynamic and JSON V3 and flattened serialisations | File format variants servers do not send over TCP; recognised and rejected explicitly |
 | Binary type name encoding | Only used by V3 prefixes and format settings CHord does not enable |
 
-## Phase 7: JDBC
+## Phase 7 remainder: JDBC conveniences
+
+The JDBC 4.3 adapter shipped: driver and service loader registration, `jdbc:chord://` URLs with
+multiple hosts, connections, statements with timeouts and cancellation, prepared statements
+with native block batching for `INSERT ... VALUES (?, ...)`, streaming result sets with
+lossless getter coercions, database metadata over the system tables, a plain DataSource, and
+retry aware exception mapping (see ADR-0014). What remains from the Phase 7 scope:
 
 | Feature | Notes |
 |---|---|
-| JDBC 4.3 adapter | URL parser, Driver, Connection, Statement, PreparedStatement, ResultSet, DatabaseMetaData, DataSource, delegating to the native client; honest `SQLFeatureNotSupportedException` for what ClickHouse cannot do |
+| TIME getters and parameters | Follow the native Time/Time64 support |
+| Scrollable or updatable result sets | Never planned: dishonest over a streaming columnar protocol |
+| getObject for JSON, Variant and Dynamic beyond the native representations | Values surface as the native client's maps and objects today |
 
 ## After Phase 5, unscheduled
 
