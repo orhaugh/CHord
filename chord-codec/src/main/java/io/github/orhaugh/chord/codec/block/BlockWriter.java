@@ -15,11 +15,14 @@
  */
 package io.github.orhaugh.chord.codec.block;
 
+import io.github.orhaugh.chord.codec.column.ColumnWriter;
+import io.github.orhaugh.chord.protocol.ProtocolFeature;
 import io.github.orhaugh.chord.protocol.wire.WireWriter;
 
 /**
- * Encodes native blocks. Phase 2 only needs the empty block that terminates the external tables
- * stream after a query; full block encoding for INSERT arrives in Phase 3.
+ * Encodes native blocks, mirroring {@code NativeWriter::write} in the ClickHouse sources: block
+ * info, column and row counts, then per column its name, type name, the custom serialisation flag
+ * (always plain, from revision 54454) and the column data.
  */
 public final class BlockWriter {
 
@@ -35,5 +38,27 @@ public final class BlockWriter {
     BlockInfo.DEFAULT.write(out, negotiatedRevision);
     out.writeVarUInt(0);
     out.writeVarUInt(0);
+  }
+
+  /**
+   * Writes a block.
+   *
+   * @param out writer to encode into
+   * @param block the block to encode
+   * @param negotiatedRevision the negotiated protocol revision, which gates info fields and the
+   *     custom serialisation flag
+   */
+  public static void write(WireWriter out, Block block, long negotiatedRevision) {
+    block.info().write(out, negotiatedRevision);
+    out.writeVarUInt(block.columnCount());
+    out.writeVarUInt(block.rows());
+    for (Block.NamedColumn column : block.columns()) {
+      out.writeString(column.name());
+      out.writeString(column.column().type().name());
+      if (ProtocolFeature.CUSTOM_SERIALIZATION.enabledFor(negotiatedRevision)) {
+        out.writeUInt8(0); // plain serialisation, never sparse
+      }
+      ColumnWriter.write(out, column.column());
+    }
   }
 }

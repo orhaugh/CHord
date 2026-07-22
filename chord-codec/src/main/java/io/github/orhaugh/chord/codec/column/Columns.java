@@ -595,6 +595,11 @@ public final class Columns {
       return zone;
     }
 
+    int rawSecondsAt(int row) {
+      checkRow(row);
+      return seconds[row];
+    }
+
     @Override
     public Object objectAt(int row) {
       return instantAt(row);
@@ -646,6 +651,11 @@ public final class Columns {
      */
     public ZoneId zone() {
       return zone;
+    }
+
+    long rawTicksAt(int row) {
+      checkRow(row);
+      return ticks[row];
     }
 
     @Override
@@ -726,7 +736,8 @@ public final class Columns {
     }
 
     /**
-     * Returns the value at a row.
+     * Returns the value at a row. IPv4 mapped addresses surface as {@link java.net.Inet4Address}
+     * per Java's address model; the wire form is always sixteen bytes.
      *
      * @param row row index
      * @return the address
@@ -738,6 +749,11 @@ public final class Columns {
       } catch (UnknownHostException e) {
         throw new IllegalStateException(e);
       }
+    }
+
+    byte[] rawAt(int row) {
+      checkRow(row);
+      return Arrays.copyOfRange(data, row * 16, row * 16 + 16);
     }
 
     @Override
@@ -916,6 +932,10 @@ public final class Columns {
       return elements;
     }
 
+    long[] rawOffsets() {
+      return offsets;
+    }
+
     /**
      * Returns the value at a row as an unmodifiable list view over the flattened elements.
      *
@@ -998,6 +1018,18 @@ public final class Columns {
       this.offsets = offsets;
       this.keys = keys;
       this.values = values;
+    }
+
+    long[] rawOffsets() {
+      return offsets;
+    }
+
+    Column rawKeys() {
+      return keys;
+    }
+
+    Column rawValues() {
+      return values;
     }
 
     /**
