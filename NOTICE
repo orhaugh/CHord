@@ -3,3 +3,9 @@ Copyright 2026 Ross Haugh
 
 This product includes software developed as part of the CHord project
 (https://github.com/orhaugh/CHord).
+
+The class io.github.orhaugh.chord.codec.compress.CityHash102 is a Java port
+of CityHash version 1.0.2, Copyright (c) 2011 Google, Inc. (Geoff Pike and
+Jyrki Alakuijala), provided under the MIT License and vendored by ClickHouse
+in contrib/cityhash102. The original licence text is available at
+https://github.com/ClickHouse/ClickHouse/blob/master/contrib/cityhash102/COPYING

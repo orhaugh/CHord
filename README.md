@@ -25,7 +25,9 @@ protocol, implemented against the current ClickHouse sources and tested against 
 | TLS and mutual TLS: hostname verification always on, SNI, system/JKS/PKCS#12/PEM trust, PEM and key store client material, expiry diagnostics | Done, tested against local TLS servers and real ClickHouse |
 | Streaming SELECT: Query packet with full ClientInfo, native block decoding, typed columnar access, parameters, settings, totals, extremes, profile info, progress | Done, byte level and integration tested, values differentially checked against clickhouse-client |
 | Native INSERT streaming: server driven schema, typed block building, multi block streaming, defaults metadata, async insert settings, no implicit partial commits | Done, round trip and integration tested |
-| LZ4 and ZSTD compression, logs, profile events, chunked framing | Planned, Phase 4 |
+| Compression (LZ4, LZ4HC, ZSTD) with checksum validation and bomb limits, per connection or per query | Done, golden and integration tested against real servers |
+| Chunked packet framing in both directions, including strict `proto_caps` servers | Done, byte level and integration tested |
+| Server logs and typed profile event counters, raw and compressed | Done, integration tested |
 | Pooling, failover, retry classification, cancellation | Planned, Phase 5 |
 | LowCardinality, Variant, Dynamic, JSON serialisations | Planned, Phase 6 |
 | JDBC adapter | Planned, Phase 7 |
@@ -161,7 +163,7 @@ A runnable version of this is in
 | Module | Purpose |
 |---|---|
 | `chord-protocol` | Wire primitives, packet models, revision registry, handshake codecs, state machine, exceptions. Zero dependencies. |
-| `chord-codec` | The recursive type model and parser, column codecs, native block decoding and encoding, and the typed `BlockBuilder`. Compression arrives in Phase 4. |
+| `chord-codec` | The recursive type model and parser, column codecs, native block decoding and encoding, the typed `BlockBuilder`, and the compressed frame codec with CityHash 1.0.2 checksums. |
 | `chord-transport` | Blocking TCP and TLS transports behind an SPI. |
 | `chord-client` | The client API: `NativeConnection` with handshake, ping, streaming SELECT (`QueryResult`) and streaming INSERT (`InsertStream`). |
 | `chord-observability` | Micrometer, OpenTelemetry and JFR integrations. Placeholder until Phase 5. |

@@ -48,7 +48,7 @@ class QueryCodecTest {
             .build();
 
     byte[] encoded =
-        written(w -> QueryCodec.writeQuery(w, request, options, 54488, "user", "host"));
+        written(w -> QueryCodec.writeQuery(w, request, options, 54488, "user", "host", false));
 
     byte[] expected =
         written(
@@ -96,18 +96,7 @@ class QueryCodecTest {
               w.writeVarUInt(0x02);
               w.writeString("'it\\'s'");
               w.writeString(""); // end of parameters
-              // Terminal empty external tables block.
-              w.writeVarUInt(2); // Client::Data
-              w.writeString("");
-              w.writeVarUInt(1);
-              w.writeBool(false);
-              w.writeVarUInt(2);
-              w.writeInt32Le(-1);
-              w.writeVarUInt(3);
-              w.writeVarUInt(0);
-              w.writeVarUInt(0);
-              w.writeVarUInt(0); // zero columns
-              w.writeVarUInt(0); // zero rows
+              // The external tables terminator is a separate packet owned by the connection.
             });
 
     assertThat(encoded).isEqualTo(expected);
@@ -120,7 +109,8 @@ class QueryCodecTest {
 
     // At revision 54470: no client agent (54485), no internal flag (54486), no roles (54488),
     // no external roles string (54472), no query and line numbers (54475), no JWT flag (54476).
-    byte[] encoded = written(w -> QueryCodec.writeQuery(w, request, options, 54470, "u", "h"));
+    byte[] encoded =
+        written(w -> QueryCodec.writeQuery(w, request, options, 54470, "u", "h", false));
 
     byte[] expected =
         written(
@@ -152,15 +142,6 @@ class QueryCodecTest {
               w.writeVarUInt(0);
               w.writeString("SELECT 1");
               w.writeString(""); // end of parameters (54459)
-              w.writeVarUInt(2);
-              w.writeString("");
-              w.writeVarUInt(1);
-              w.writeBool(false);
-              w.writeVarUInt(2);
-              w.writeInt32Le(-1);
-              w.writeVarUInt(0);
-              w.writeVarUInt(0);
-              w.writeVarUInt(0);
             });
 
     assertThat(encoded).isEqualTo(expected);

@@ -239,6 +239,35 @@ public final class WireReader {
   }
 
   /**
+   * Exposes this reader as an {@link InputStream} so layered decoders (for example compressed frame
+   * readers) consume bytes through this reader's buffer instead of competing with it for the
+   * underlying stream. Reads of {@code n} bytes block until exactly {@code n} bytes arrive,
+   * mirroring {@link #readFully(byte[])}.
+   *
+   * @return a stream view over this reader
+   */
+  public InputStream asInputStream() {
+    return new InputStream() {
+      @Override
+      public int read() {
+        return readUInt8();
+      }
+
+      @Override
+      public int read(byte[] target, int offset, int length) {
+        Objects.checkFromIndexSize(offset, length, target.length);
+        if (length == 0) {
+          return 0;
+        }
+        byte[] exact = new byte[length];
+        readFully(exact);
+        System.arraycopy(exact, 0, target, offset, length);
+        return length;
+      }
+    };
+  }
+
+  /**
    * Reads exactly {@code out.length} bytes into the supplied array.
    *
    * @param out destination array, filled completely

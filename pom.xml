@@ -98,6 +98,9 @@
     <jmh.version>1.37</jmh.version>
     <!-- Test certificate generation in chord-testkit only; never a runtime dependency. -->
     <bouncycastle.version>1.85</bouncycastle.version>
+    <!-- Native protocol compression codecs (ADR-0009). -->
+    <lz4.version>1.8.1</lz4.version>
+    <zstd.version>1.5.7-11</zstd.version>
 
     <!-- Plugin versions -->
     <plugin.compiler.version>3.15.0</plugin.compiler.version>
@@ -199,6 +202,16 @@
         <groupId>org.bouncycastle</groupId>
         <artifactId>bcpkix-jdk18on</artifactId>
         <version>${bouncycastle.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.lz4</groupId>
+        <artifactId>lz4-java</artifactId>
+        <version>${lz4.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.github.luben</groupId>
+        <artifactId>zstd-jni</artifactId>
+        <version>${zstd.version}</version>
       </dependency>
       <dependency>
         <groupId>org.openjdk.jmh</groupId>

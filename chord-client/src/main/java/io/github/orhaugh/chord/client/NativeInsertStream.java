@@ -74,18 +74,20 @@ final class NativeInsertStream implements InsertStream {
         ServerPacketType packet = ServerPacketType.fromCode(code);
         switch (packet) {
           case TABLE_COLUMNS -> {
-            in.readString(); // external table name, empty for the main table
-            tableColumnsDescription = in.readString();
+            // Both strings travel on the compressed stream from revision 54481.
+            WireReader body = connection.auxiliaryBodyReader();
+            body.readString(); // external table name, empty for the main table
+            tableColumnsDescription = body.readString();
           }
           case DATA -> {
             in.readString();
-            schema = BlockReader.read(in, decodeContext());
+            schema = BlockReader.read(connection.dataBodyReader(), decodeContext());
             connection.beginInsertStreaming();
             return;
           }
           case LOG -> {
             in.readString();
-            BlockReader.read(in, decodeContext());
+            BlockReader.read(connection.auxiliaryBodyReader(), decodeContext());
           }
           case PROGRESS -> accumulate(Progress.read(in, connection.negotiatedRevision()));
           case TIMEZONE_UPDATE -> connection.updateSessionTimezone(in.readString());
@@ -130,8 +132,11 @@ final class NativeInsertStream implements InsertStream {
     try {
       out.writeVarUInt(ClientPacketType.DATA.code());
       out.writeString(""); // main table stream
-      BlockWriter.write(out, block, connection.negotiatedRevision());
       out.flush();
+      WireWriter body = connection.blockBodyWriter();
+      BlockWriter.write(body, block, connection.negotiatedRevision());
+      body.flush();
+      connection.endPacket();
       rowsSent += block.rows();
       blocksSent++;
     } catch (RuntimeException e) {
@@ -166,9 +171,7 @@ final class NativeInsertStream implements InsertStream {
   public InsertSummary finish() {
     ensureStreaming("finish");
     try {
-      out.writeVarUInt(ClientPacketType.DATA.code());
-      out.writeString("");
-      BlockWriter.writeEmpty(out, connection.negotiatedRevision());
+      connection.sendEmptyDataPacket();
       out.flush();
       connection.finishInsertStreaming();
       drainToEndOfStream();
@@ -199,7 +202,7 @@ final class NativeInsertStream implements InsertStream {
           case PROGRESS -> accumulate(Progress.read(in, connection.negotiatedRevision()));
           case LOG, PROFILE_EVENTS -> {
             in.readString();
-            BlockReader.read(in, decodeContext());
+            BlockReader.read(connection.auxiliaryBodyReader(), decodeContext());
           }
           case TIMEZONE_UPDATE -> connection.updateSessionTimezone(in.readString());
           case END_OF_STREAM -> {

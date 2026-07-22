@@ -43,13 +43,18 @@ abandoned streams. What remains from the Phase 3 scope:
 | Iterable object mapping onto inserts | Row object convenience per ADR-0005 |
 | `input(...)` based streaming | |
 
-## Phase 4: compression and advanced packets
+## Phase 4 remainder: compression conveniences
+
+Compression and chunked framing shipped: LZ4, LZ4HC, ZSTD and NONE frames with CityHash 1.0.2
+checksum validation, corrupt frame detection and decompression bomb limits, per connection and
+per query selection, chunked packet framing in both directions including strict servers, the
+compressed Log, ProfileEvents and TableColumns bodies of revision 54481, and typed profile event
+counters on query results. What remains from the Phase 4 scope:
 
 | Feature | Notes |
 |---|---|
-| LZ4, LZ4HC, ZSTD, NONE framing | ClickHouse CityHash checksum validation, corrupt frame detection, decompression bomb limits |
-| Chunked packet framing | Negotiation is already implemented; framing itself is not. Servers strictly requiring chunked framing are refused until this lands |
-| Log, ProfileInfo, ProfileEvents, Totals, Extremes packets | Including compressed columns from revision 54481 |
+| Log entry callbacks | Server logs are consumed, bounded and forwarded to SLF4J; push callbacks arrive with the async API in Phase 5 |
+| Compression statistics accessors | Compressed and raw byte counters per exchange |
 
 ## Phase 5: pooling and resilience
 

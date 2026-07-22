@@ -19,6 +19,10 @@ import io.github.orhaugh.chord.ChordConfigurationException;
 import io.github.orhaugh.chord.ChordProtocolException;
 import io.github.orhaugh.chord.annotations.Experimental;
 import io.github.orhaugh.chord.codec.block.BlockLimits;
+import io.github.orhaugh.chord.codec.block.BlockWriter;
+import io.github.orhaugh.chord.codec.compress.Compression;
+import io.github.orhaugh.chord.codec.compress.FrameCompressingOutputStream;
+import io.github.orhaugh.chord.codec.compress.FrameDecompressingInputStream;
 import io.github.orhaugh.chord.protocol.ClientPacketType;
 import io.github.orhaugh.chord.protocol.Progress;
 import io.github.orhaugh.chord.protocol.ProtocolFeature;
@@ -33,6 +37,8 @@ import io.github.orhaugh.chord.protocol.state.ConnectionState;
 import io.github.orhaugh.chord.protocol.state.ConnectionStateMachine;
 import io.github.orhaugh.chord.protocol.wire.WireReader;
 import io.github.orhaugh.chord.protocol.wire.WireWriter;
+import io.github.orhaugh.chord.transport.ChunkedInputStream;
+import io.github.orhaugh.chord.transport.ChunkedOutputStream;
 import io.github.orhaugh.chord.transport.NativeTransport;
 import io.github.orhaugh.chord.transport.TcpTransport;
 import io.github.orhaugh.chord.transport.TlsTransport;
@@ -75,7 +81,14 @@ public final class NativeConnection implements AutoCloseable {
   private final long negotiatedRevision;
   private final ConnectionStateMachine state;
   private final ConnectionOptions options;
+  private final ChunkedOutputStream chunkedOut;
   private volatile ZoneId sessionTimezone;
+  private WireReader compressedReader;
+  private ActiveCompression activeCompression;
+  private WireWriter activeFrameWriter;
+
+  /** The compression selection of the active exchange: the method and its effective level. */
+  private record ActiveCompression(Compression method, int level) {}
 
   private NativeConnection(
       long id,
@@ -85,7 +98,8 @@ public final class NativeConnection implements AutoCloseable {
       ServerHello serverHello,
       long negotiatedRevision,
       ConnectionStateMachine state,
-      ConnectionOptions options) {
+      ConnectionOptions options,
+      ChunkedOutputStream chunkedOut) {
     this.id = id;
     this.transport = transport;
     this.in = in;
@@ -94,6 +108,7 @@ public final class NativeConnection implements AutoCloseable {
     this.negotiatedRevision = negotiatedRevision;
     this.state = state;
     this.options = options;
+    this.chunkedOut = chunkedOut;
     this.sessionTimezone = parseZone(serverHello.timezone().orElse("UTC"));
   }
 
@@ -157,20 +172,35 @@ public final class NativeConnection implements AutoCloseable {
       long negotiated =
           ProtocolRevisions.negotiate(options.advertisedRevision(), serverHello.serverRevision());
 
-      negotiatePlainFraming(serverHello, negotiated);
+      boolean[] chunked = resolveFraming(serverHello, negotiated);
+      boolean sendChunked = chunked[0];
+      boolean receiveChunked = chunked[1];
 
       if (ProtocolFeature.ADDENDUM.enabledFor(negotiated)) {
         HelloCodec.writeAddendum(
             out,
             negotiated,
             options.quotaKey(),
-            ChunkedProtocolMode.NOTCHUNKED,
-            ChunkedProtocolMode.NOTCHUNKED);
+            sendChunked ? ChunkedProtocolMode.CHUNKED : ChunkedProtocolMode.NOTCHUNKED,
+            receiveChunked ? ChunkedProtocolMode.CHUNKED : ChunkedProtocolMode.NOTCHUNKED);
         out.flush();
       }
 
+      // Chunked framing starts strictly after the addendum, per Connection::connect.
+      ChunkedOutputStream chunkedOut = null;
+      if (sendChunked) {
+        chunkedOut = new ChunkedOutputStream(transport.outputStream());
+        out = new WireWriter(chunkedOut);
+      }
+      if (receiveChunked) {
+        // Layer over the handshake reader, not the raw stream: its buffer may already hold
+        // bytes that belong to the chunked stream.
+        in = new WireReader(new ChunkedInputStream(in.asInputStream()), options.wireLimits());
+      }
+
       NativeConnection connection =
-          new NativeConnection(id, transport, in, out, serverHello, negotiated, state, options);
+          new NativeConnection(
+              id, transport, in, out, serverHello, negotiated, state, options, chunkedOut);
       state.transitionTo(ConnectionState.READY);
       LOG.debug(
           "connection {} established to {} ({} {} revision {}, negotiated {})",
@@ -208,13 +238,15 @@ public final class NativeConnection implements AutoCloseable {
   }
 
   /**
-   * Resolves the chunked framing negotiation to plain framing. CHord requests notchunked for both
-   * channels until chunked framing lands in Phase 4; a server that strictly requires chunked
-   * framing is refused with a clear error rather than desynchronised.
+   * Resolves the chunked framing negotiation per channel. CHord prefers plain framing but accepts
+   * chunked when the server requires it, so servers configured with strict {@code proto_caps} work.
+   * The client send channel pairs with the server receive capability and vice versa.
+   *
+   * @return {@code [sendChunked, receiveChunked]}
    */
-  private static void negotiatePlainFraming(ServerHello serverHello, long negotiated) {
+  private static boolean[] resolveFraming(ServerHello serverHello, long negotiated) {
     if (!ProtocolFeature.CHUNKED_PACKETS.enabledFor(negotiated)) {
-      return;
+      return new boolean[] {false, false};
     }
     ChunkedProtocolMode serverSend =
         ChunkedProtocolMode.fromWire(
@@ -236,14 +268,25 @@ public final class NativeConnection implements AutoCloseable {
                             "Server omitted its chunked receive capability despite negotiating"
                                 + " revision "
                                 + negotiated)));
-    // The client send channel pairs with the server receive capability and vice versa.
     boolean sendChunked =
-        ChunkedProtocolMode.resolveChunked(serverReceive, ChunkedProtocolMode.NOTCHUNKED, "send");
+        ChunkedProtocolMode.resolveChunked(
+            serverReceive, ChunkedProtocolMode.NOTCHUNKED_OPTIONAL, "send");
     boolean receiveChunked =
-        ChunkedProtocolMode.resolveChunked(serverSend, ChunkedProtocolMode.NOTCHUNKED, "recv");
-    if (sendChunked || receiveChunked) {
-      throw new ChordProtocolException(
-          "Chunked framing resolved as required, but CHord does not implement it yet");
+        ChunkedProtocolMode.resolveChunked(
+            serverSend, ChunkedProtocolMode.NOTCHUNKED_OPTIONAL, "recv");
+    return new boolean[] {sendChunked, receiveChunked};
+  }
+
+  /** Marks a protocol packet boundary on the send channel; a no op without chunked framing. */
+  void endPacket() {
+    out.flush();
+    if (chunkedOut != null) {
+      try {
+        chunkedOut.endMessage();
+      } catch (java.io.IOException e) {
+        throw new io.github.orhaugh.chord.ChordTransportException(
+            "I/O failure concluding a chunked packet", e);
+      }
     }
   }
 
@@ -309,7 +352,17 @@ public final class NativeConnection implements AutoCloseable {
   public QueryResult query(QueryRequest request) {
     state.transitionTo(ConnectionState.WRITING_QUERY);
     try {
-      QueryCodec.writeQuery(out, request, options, negotiatedRevision, osUser(), localHostname());
+      beginExchange(request);
+      QueryCodec.writeQuery(
+          out,
+          request,
+          options,
+          negotiatedRevision,
+          osUser(),
+          localHostname(),
+          activeCompression != null);
+      endPacket();
+      sendEmptyDataPacket();
       out.flush();
       state.transitionTo(ConnectionState.READING_RESPONSE);
       LOG.debug("connection {} query {} sent", id, request.queryId());
@@ -336,6 +389,89 @@ public final class NativeConnection implements AutoCloseable {
     } catch (Exception e) {
       return "";
     }
+  }
+
+  /** Chooses the effective compression for an exchange and resets per exchange streams. */
+  private void beginExchange(QueryRequest request) {
+    Compression connectionMethod = options.compression().orElse(null);
+    Compression requestMethod = request.compression().orElse(null);
+    Compression method = requestMethod != null ? requestMethod : connectionMethod;
+    // The connection's tuned level only applies to its own method; a per query override uses
+    // the override method's default level.
+    int level =
+        requestMethod != null && requestMethod != connectionMethod
+            ? requestMethod.defaultLevel()
+            : options.compressionLevel();
+    activeCompression = method == null ? null : new ActiveCompression(method, level);
+    activeFrameWriter = null;
+  }
+
+  /**
+   * Sends one Data packet carrying an empty block: the external tables terminator after a query and
+   * the terminal block of an INSERT. The block body travels through the compressed stream when the
+   * exchange is compressed, matching {@code Connection::sendData}.
+   */
+  void sendEmptyDataPacket() {
+    out.writeVarUInt(ClientPacketType.DATA.code());
+    out.writeString(""); // external table name; empty means the main stream
+    if (activeCompression != null) {
+      out.flush();
+      WireWriter body = frameWriter();
+      BlockWriter.writeEmpty(body, negotiatedRevision);
+      body.flush();
+    } else {
+      BlockWriter.writeEmpty(out, negotiatedRevision);
+    }
+    endPacket();
+  }
+
+  /** Returns the writer for outgoing block bodies of the active exchange. */
+  WireWriter blockBodyWriter() {
+    return activeCompression != null ? frameWriter() : out;
+  }
+
+  private WireWriter frameWriter() {
+    if (activeFrameWriter == null) {
+      java.io.OutputStream sink = chunkedOut != null ? chunkedOut : transport.outputStream();
+      activeFrameWriter =
+          new WireWriter(
+              new FrameCompressingOutputStream(
+                  sink, activeCompression.method(), activeCompression.level()));
+    }
+    return activeFrameWriter;
+  }
+
+  /** Returns the raw packet reader. */
+  WireReader packetReader() {
+    return in;
+  }
+
+  /** Returns the reader for Data, Totals and Extremes bodies of the active exchange. */
+  WireReader dataBodyReader() {
+    return activeCompression != null ? compressedReader() : in;
+  }
+
+  /**
+   * Returns the reader for Log, ProfileEvents and TableColumns bodies, which travel compressed only
+   * from revision 54481 and only when the exchange is compressed.
+   */
+  WireReader auxiliaryBodyReader() {
+    boolean compressed =
+        activeCompression != null
+            && ProtocolFeature.COMPRESSED_LOGS_PROFILE_EVENTS_COLUMNS.enabledFor(
+                negotiatedRevision);
+    return compressed ? compressedReader() : in;
+  }
+
+  private WireReader compressedReader() {
+    if (compressedReader == null) {
+      // Frames are pulled through the raw reader so its buffering stays consistent.
+      compressedReader =
+          new WireReader(
+              new FrameDecompressingInputStream(in.asInputStream(), options.compressionLimits()),
+              options.wireLimits());
+    }
+    return compressedReader;
   }
 
   /** Returns the block decode limits configured for this connection. */
@@ -370,7 +506,17 @@ public final class NativeConnection implements AutoCloseable {
   public InsertStream insert(QueryRequest request) {
     state.transitionTo(ConnectionState.WRITING_QUERY);
     try {
-      QueryCodec.writeQuery(out, request, options, negotiatedRevision, osUser(), localHostname());
+      beginExchange(request);
+      QueryCodec.writeQuery(
+          out,
+          request,
+          options,
+          negotiatedRevision,
+          osUser(),
+          localHostname(),
+          activeCompression != null);
+      endPacket();
+      sendEmptyDataPacket();
       out.flush();
       state.transitionTo(ConnectionState.READING_RESPONSE);
       LOG.debug("connection {} insert {} sent", id, request.queryId());
@@ -415,6 +561,7 @@ public final class NativeConnection implements AutoCloseable {
     state.transitionTo(ConnectionState.PINGING);
     try {
       out.writeVarUInt(ClientPacketType.PING.code());
+      endPacket();
       out.flush();
       while (true) {
         long packet = in.readVarUInt();

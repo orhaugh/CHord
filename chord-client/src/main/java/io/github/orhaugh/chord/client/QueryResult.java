@@ -69,6 +69,14 @@ public interface QueryResult extends AutoCloseable {
   Optional<ProfileInfo> profileInfo();
 
   /**
+   * Returns the profile event counters accumulated so far, keyed by event name: increments sum
+   * across packets and gauges keep their latest value.
+   *
+   * @return event names to values
+   */
+  java.util.Map<String, Long> profileEvents();
+
+  /**
    * Returns the totals block of a {@code WITH TOTALS} query, once received.
    *
    * @return the totals block

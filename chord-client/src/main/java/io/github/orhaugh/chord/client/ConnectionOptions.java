@@ -18,6 +18,8 @@ package io.github.orhaugh.chord.client;
 import io.github.orhaugh.chord.ChordConfigurationException;
 import io.github.orhaugh.chord.annotations.Experimental;
 import io.github.orhaugh.chord.codec.block.BlockLimits;
+import io.github.orhaugh.chord.codec.compress.Compression;
+import io.github.orhaugh.chord.codec.compress.CompressionLimits;
 import io.github.orhaugh.chord.protocol.ProtocolRevisions;
 import io.github.orhaugh.chord.protocol.wire.WireLimits;
 import io.github.orhaugh.chord.transport.TlsOptions;
@@ -52,6 +54,9 @@ public final class ConnectionOptions {
   private final boolean allowPlaintextPassword;
   private final WireLimits wireLimits;
   private final BlockLimits blockLimits;
+  private final Compression compression;
+  private final int compressionLevel;
+  private final CompressionLimits compressionLimits;
   private final TransportOptions transportOptions;
 
   private ConnectionOptions(Builder builder) {
@@ -67,6 +72,9 @@ public final class ConnectionOptions {
     this.allowPlaintextPassword = builder.allowPlaintextPassword;
     this.wireLimits = builder.wireLimits;
     this.blockLimits = builder.blockLimits;
+    this.compression = builder.compression;
+    this.compressionLevel = builder.compressionLevel;
+    this.compressionLimits = builder.compressionLimits;
     this.transportOptions = builder.transportOptions;
   }
 
@@ -199,6 +207,34 @@ public final class ConnectionOptions {
   }
 
   /**
+   * Returns the compression applied to payloads this connection sends, empty when the exchange is
+   * uncompressed. Reading always auto detects the method per frame.
+   *
+   * @return the compression method
+   */
+  public java.util.Optional<Compression> compression() {
+    return java.util.Optional.ofNullable(compression);
+  }
+
+  /**
+   * Returns the encoder level for the configured compression method.
+   *
+   * @return the level
+   */
+  public int compressionLevel() {
+    return compressionLevel;
+  }
+
+  /**
+   * Returns the limits applied to received compressed frames.
+   *
+   * @return the compression limits
+   */
+  public CompressionLimits compressionLimits() {
+    return compressionLimits;
+  }
+
+  /**
    * Returns the socket configuration.
    *
    * @return the transport options
@@ -240,6 +276,9 @@ public final class ConnectionOptions {
     private boolean allowPlaintextPassword;
     private WireLimits wireLimits = WireLimits.DEFAULTS;
     private BlockLimits blockLimits = BlockLimits.DEFAULTS;
+    private Compression compression;
+    private int compressionLevel;
+    private CompressionLimits compressionLimits = CompressionLimits.DEFAULTS;
     private TransportOptions transportOptions = TransportOptions.DEFAULTS;
 
     private Builder() {}
@@ -399,6 +438,44 @@ public final class ConnectionOptions {
      */
     public Builder blockLimits(BlockLimits limits) {
       this.blockLimits = Objects.requireNonNull(limits, "blockLimits");
+      return this;
+    }
+
+    /**
+     * Enables compression for payloads this connection sends, at the method's default level. Data
+     * blocks in both directions travel as checksummed frames; the server chooses its own method per
+     * frame and CHord auto detects it. NONE gives integrity framing without compression.
+     *
+     * @param compression the method
+     * @return this builder
+     */
+    public Builder compression(Compression compression) {
+      this.compression = Objects.requireNonNull(compression, "compression");
+      this.compressionLevel = compression.defaultLevel();
+      return this;
+    }
+
+    /**
+     * Enables compression with an explicit encoder level.
+     *
+     * @param compression the method
+     * @param level the encoder level, validated per method
+     * @return this builder
+     */
+    public Builder compression(Compression compression, int level) {
+      this.compression = Objects.requireNonNull(compression, "compression");
+      this.compressionLevel = compression.checkLevel(level);
+      return this;
+    }
+
+    /**
+     * Sets the limits applied to received compressed frames.
+     *
+     * @param limits the limits
+     * @return this builder
+     */
+    public Builder compressionLimits(CompressionLimits limits) {
+      this.compressionLimits = Objects.requireNonNull(limits, "compressionLimits");
       return this;
     }
 

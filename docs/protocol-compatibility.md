@@ -64,13 +64,49 @@ ServerHello revision gated fields, in wire order:
 The string and count caps mirror the server's own `DBMS_MAX_HELLO_STRING_SIZE` (4096) and
 `DBMS_MAX_PASSWORD_COMPLEXITY_RULES` (256).
 
-### Chunked framing negotiation
+### Chunked framing (implemented and tested)
 
-CHord parses the server capabilities, resolves them with the same rules as
-`Connection::connect`, and requests `notchunked` for both channels in the addendum. Chunked
-framing itself is not implemented until Phase 4, so a server that strictly requires `chunked`
-(non default `proto_caps` configuration) is refused with a clear error instead of a
-desynchronised stream. Servers with default or optional capabilities work.
+CHord parses the server capabilities and resolves them with the same rules as
+`Connection::connect`, preferring `notchunked` but adopting `chunked` per channel when the server
+requires it. The resolved framing is reported in the addendum and takes effect strictly after the
+addendum, mirroring `TCPHandler`. Servers with default, optional and strict `proto_caps`
+configurations all work, in every combination of directions.
+
+On a chunked channel every protocol packet travels as one or more chunks of
+`[little endian u32 length][payload]` closed by a zero length terminator. A zero length chunk at
+the start of a message is a protocol violation on both sides. CHord emits each chunk header, its
+payload and, at packet end, the terminator in a single transport write: the server completes a
+chunk header that arrived partially with one further read and treats a short result as a clean
+end of stream, so headers must never travel as lone TCP segments. This is an interoperability
+requirement verified by unit tests on write boundaries and by integration tests against strict
+chunked servers.
+
+### Compression (implemented and tested)
+
+When compression is enabled on a connection (`ConnectionOptions.compression`) or for a single
+query (`QueryRequest.compression`), the Query packet sets the compression flag and block bodies
+travel as ClickHouse compressed frames:
+
+`[16 byte CityHash128 v1.0.2 checksum][method byte][compressed size u32][decompressed size u32][payload]`
+
+- Methods: `NONE` (0x02), `LZ4` (0x82), `LZ4HC` (same byte, higher encoder effort), `ZSTD`
+  (0x90). Unknown method bytes fail explicitly.
+- The checksum covers the 9 byte header plus payload and is validated before decompression; the
+  declared decompressed size must match exactly. Mismatches raise
+  `ChordDataCorruptionException` and poison the connection.
+- Declared sizes are validated against `CompressionLimits` (1 GiB defaults, matching the server's
+  `DBMS_MAX_COMPRESSED_SIZE`) before any allocation, bounding hostile input.
+- Frames align to packet boundaries. Packet identifiers and the Data, Log, ProfileEvents and
+  TableColumns tag strings always travel raw; only block bodies are framed.
+- Data, Totals and Extremes bodies are compressed at every supported revision when the query
+  flag is set. Log, ProfileEvents and TableColumns bodies are compressed only from revision
+  54481 (`PROTOCOL_VERSION_WITH_COMPRESSED_LOGS_PROFILE_EVENTS_COLUMNS`); below it they stay
+  raw on an otherwise compressed exchange. TableColumns carries both of its strings on the
+  compressed stream.
+- Compression and chunked framing compose: frames travel inside chunks.
+
+The checksum implementation is a pure Java port of CityHash 1.0.2 (the exact historical version
+ClickHouse pins), cross validated against frames produced by the real `clickhouse-compressor`.
 
 ### Deliberate strictness deviations
 
@@ -107,7 +143,7 @@ Server packets (`Protocol::Server`):
 | Code | Packet | Status |
 |---|---|---|
 | 0 | Hello | Implemented and tested |
-| 1 | Data | Implemented and tested: uncompressed native blocks, all Phase 2 types, header and multi block streams |
+| 1 | Data | Implemented and tested: native blocks raw and compressed, all Phase 2 types, header and multi block streams |
 | 2 | Exception | Implemented and tested |
 | 3 | Progress | Implemented and tested, including accumulation on query results |
 | 4 | Pong | Implemented and tested |
@@ -116,11 +152,11 @@ Server packets (`Protocol::Server`):
 | 7 | Totals | Implemented and tested |
 | 8 | Extremes | Implemented and tested |
 | 9 | TablesStatusResponse | Planned, after Phase 5 |
-| 10 | Log | Implemented: consumed, bounded and logged (uncompressed streams; compressed variants arrive with Phase 4) |
-| 11 | TableColumns | Implemented and tested: default expressions metadata consumed before the INSERT schema block |
+| 10 | Log | Implemented and tested: consumed, bounded and logged, raw and compressed (54481) |
+| 11 | TableColumns | Implemented and tested: default expressions metadata consumed before the INSERT schema block, raw and compressed (54481, both strings on the compressed stream) |
 | 12 | PartUUIDs | Obsolete upstream; recognised, treated as a protocol error |
 | 13 | ReadTaskRequest | Recognised, treated as a protocol error (not an external client packet) |
-| 14 | ProfileEvents | Implemented: consumed and discarded; a typed accessor arrives in Phase 4 |
+| 14 | ProfileEvents | Implemented and tested: accumulated into the typed `QueryResult.profileEvents()` counters, raw and compressed (54481) |
 | 15 | MergeTreeAllRangesAnnouncement | Recognised, treated as a protocol error (inter server) |
 | 16 | MergeTreeReadTaskRequest | Recognised, treated as a protocol error (inter server) |
 | 17 | TimezoneUpdate | Implemented and applied to the session timezone |

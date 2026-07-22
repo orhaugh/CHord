@@ -8,6 +8,25 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ### Added
 
+- Native protocol compression. `chord-codec` gains the ClickHouse compressed frame codec:
+  LZ4, LZ4HC, ZSTD and NONE methods, CityHash128 v1.0.2 checksums (a pure Java port of the
+  exact historical version ClickHouse pins, cross validated against frames produced by
+  `clickhouse-compressor`), checksum validation before decompression, exact decompressed size
+  enforcement and `CompressionLimits` bounding declared sizes before any allocation. Corrupt or
+  oversized frames raise `ChordDataCorruptionException`.
+- `chord-client`: compression per connection (`ConnectionOptions.compression`, with an optional
+  tuned level) or per query (`QueryRequest.compression`). Data, Totals and Extremes bodies
+  travel compressed in both directions; Log, ProfileEvents and TableColumns bodies follow from
+  revision 54481. Verified against ClickHouse 25.8, 26.3 and 26.6 for large SELECT streams and
+  multi block INSERT round trips with every method.
+- Chunked packet framing (revision 54470) in both directions, negotiated per channel with the
+  same rules as the official client, so servers strictly requiring `chunked` now work, composed
+  freely with compression and TLS. Every chunk travels with its header, payload and terminator
+  in a single transport write; the server treats a short read while completing a split chunk
+  header as end of stream, so lone header segments would drop connections intermittently.
+- `QueryResult.profileEvents()`: typed per query profile event counters accumulated from
+  ProfileEvents packets, including increments and gauges.
+
 - Native streaming INSERT. `chord-codec` gains `ColumnWriter` and full `BlockWriter` encoding
   (every supported type round trips byte exactly through encode and decode) and the typed
   `BlockBuilder`, which validates values losslessly at append time: range checked integers,

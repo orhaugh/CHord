@@ -46,6 +46,7 @@ final class NativeQueryResult implements QueryResult {
   private boolean finished;
   private boolean closed;
 
+  private final java.util.Map<String, Long> profileEvents = new java.util.TreeMap<>();
   private long progressReadRows;
   private long progressReadBytes;
   private long progressTotalRows;
@@ -117,6 +118,42 @@ final class NativeQueryResult implements QueryResult {
   }
 
   @Override
+  public java.util.Map<String, Long> profileEvents() {
+    return java.util.Map.copyOf(profileEvents);
+  }
+
+  /**
+   * Folds a ProfileEvents block into the per name counters: increments (type 1) accumulate and
+   * gauges (type 2) keep their latest value, matching the incremental packets of revision 54451.
+   */
+  private void accumulateProfileEvents(Block block) {
+    var nameColumn = block.columnByName("name");
+    var valueColumn = block.columnByName("value");
+    var typeColumn = block.columnByName("type");
+    if (nameColumn.isEmpty() || valueColumn.isEmpty() || typeColumn.isEmpty()) {
+      return; // Unknown shape; ignore rather than guess.
+    }
+    for (int row = 0; row < block.rows(); row++) {
+      String name = String.valueOf(nameColumn.get().objectAt(row));
+      Object rawValue = valueColumn.get().objectAt(row);
+      long value = rawValue instanceof Number number ? number.longValue() : 0;
+      // The type column is Enum8('increment' = 1, 'gauge' = 2); older shapes carried Int8.
+      Object rawType = typeColumn.get().objectAt(row);
+      int type =
+          switch (rawType) {
+            case Number number -> number.intValue();
+            case String label -> label.equals("increment") ? 1 : label.equals("gauge") ? 2 : 0;
+            default -> 0;
+          };
+      if (type == 1) {
+        profileEvents.merge(name, value, Long::sum);
+      } else if (type == 2) {
+        profileEvents.put(name, value);
+      }
+    }
+  }
+
+  @Override
   public Optional<Block> totals() {
     return Optional.ofNullable(totals);
   }
@@ -141,21 +178,21 @@ final class NativeQueryResult implements QueryResult {
         switch (packet) {
           case DATA -> {
             in.readString(); // external table name, empty for the main stream
-            return BlockReader.read(in, decodeContext());
+            return BlockReader.read(connection.dataBodyReader(), decodeContext());
           }
           case PROGRESS -> accumulate(Progress.read(in, connection.negotiatedRevision()));
           case PROFILE_INFO -> profileInfo = ProfileInfo.read(in, connection.negotiatedRevision());
           case TOTALS -> {
             in.readString();
-            totals = BlockReader.read(in, decodeContext());
+            totals = BlockReader.read(connection.dataBodyReader(), decodeContext());
           }
           case EXTREMES -> {
             in.readString();
-            extremes = BlockReader.read(in, decodeContext());
+            extremes = BlockReader.read(connection.dataBodyReader(), decodeContext());
           }
           case LOG -> {
             in.readString();
-            Block logBlock = BlockReader.read(in, decodeContext());
+            Block logBlock = BlockReader.read(connection.auxiliaryBodyReader(), decodeContext());
             if (retainedLogBlocks < MAX_RETAINED_LOG_BLOCKS) {
               retainedLogBlocks++;
               LOG.debug(
@@ -167,7 +204,8 @@ final class NativeQueryResult implements QueryResult {
           }
           case PROFILE_EVENTS -> {
             in.readString();
-            BlockReader.read(in, decodeContext());
+            accumulateProfileEvents(
+                BlockReader.read(connection.auxiliaryBodyReader(), decodeContext()));
           }
           case TIMEZONE_UPDATE -> connection.updateSessionTimezone(in.readString());
           case END_OF_STREAM -> {

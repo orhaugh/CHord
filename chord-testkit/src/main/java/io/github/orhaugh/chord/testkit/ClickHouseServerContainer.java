@@ -73,14 +73,62 @@ public final class ClickHouseServerContainer extends GenericContainer<ClickHouse
     super(image);
     addExposedPort(NATIVE_PORT);
     addExposedPort(HTTP_PORT);
-    withEnv("CLICKHOUSE_USER", USERNAME);
-    withEnv("CLICKHOUSE_PASSWORD", PASSWORD);
-    withEnv("CLICKHOUSE_DB", DATABASE);
+    // The user is provisioned through configuration rather than CLICKHOUSE_USER/CLICKHOUSE_DB:
+    // those environment variables make the image entrypoint boot a temporary server for
+    // provisioning before the real one, and the readiness probe can race it, handing tests a
+    // server that dies mid exchange moments later. A single boot has no such window.
+    // The config file targets the Linux container, so line endings are literal \n by design.
+    String usersConfig =
+        """
+        <clickhouse>
+          <users>
+            <chord>
+              <password>USER_PASSWORD</password>
+              <networks>
+                <ip>::/0</ip>
+              </networks>
+              <profile>default</profile>
+              <quota>default</quota>
+              <access_management>1</access_management>
+            </chord>
+          </users>
+        </clickhouse>
+        """
+            .replace("USER_PASSWORD", PASSWORD);
+    withCopyToContainer(
+        Transferable.of(usersConfig), "/etc/clickhouse-server/users.d/chord-user.xml");
     waitingFor(
         Wait.forHttp("/ping")
             .forPort(HTTP_PORT)
             .forStatusCode(200)
             .withStartupTimeout(Duration.ofMinutes(2)));
+  }
+
+  @Override
+  protected void containerIsStarted(
+      com.github.dockerjava.api.command.InspectContainerResponse containerInfo) {
+    // Create the test database with the in container client; with the single boot there is no
+    // temporary server phase, so the server serving this command is the one tests will use.
+    try {
+      var result =
+          execInContainer(
+              "clickhouse-client",
+              "--user",
+              USERNAME,
+              "--password",
+              PASSWORD,
+              "-q",
+              "CREATE DATABASE IF NOT EXISTS " + DATABASE);
+      if (result.getExitCode() != 0) {
+        throw new IllegalStateException(
+            "Failed to create the test database: " + result.getStderr());
+      }
+    } catch (java.io.IOException e) {
+      throw new IllegalStateException("Failed to create the test database", e);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted while creating the test database", e);
+    }
   }
 
   /**
@@ -130,6 +178,41 @@ public final class ClickHouseServerContainer extends GenericContainer<ClickHouse
             .replace("VERIFICATION_MODE", verificationMode);
     withCopyToContainer(Transferable.of(config), "/etc/clickhouse-server/config.d/chord-tls.xml");
     secureNativePortEnabled = true;
+    return this;
+  }
+
+  /**
+   * Requires chunked packet framing on the native port for both directions, the strict {@code
+   * proto_caps} configuration. Clients that cannot speak chunked framing are rejected by such a
+   * server, so this exercises the negotiation path where the client must adopt chunked framing.
+   *
+   * @return this container
+   */
+  public ClickHouseServerContainer withStrictChunkedProtocol() {
+    String config =
+        """
+        <clickhouse>
+          <proto_caps>
+            <send>chunked</send>
+            <recv>chunked</recv>
+          </proto_caps>
+        </clickhouse>
+        """;
+    withCopyToContainer(
+        Transferable.of(config), "/etc/clickhouse-server/config.d/chord-chunked.xml");
+    // The image entrypoint creates CLICKHOUSE_DB with the in container clickhouse-client,
+    // whose default framing is strict notchunked; without a matching client configuration the
+    // entrypoint is refused by the chunked server and the container never becomes ready.
+    String clientConfig =
+        """
+        <config>
+          <proto_caps>
+            <send>chunked</send>
+            <recv>chunked</recv>
+          </proto_caps>
+        </config>
+        """;
+    withCopyToContainer(Transferable.of(clientConfig), "/etc/clickhouse-client/config.xml");
     return this;
   }
 

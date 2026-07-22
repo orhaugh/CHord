@@ -17,6 +17,7 @@ package io.github.orhaugh.chord.client;
 
 import io.github.orhaugh.chord.ChordConfigurationException;
 import io.github.orhaugh.chord.annotations.Experimental;
+import io.github.orhaugh.chord.codec.compress.Compression;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -37,12 +38,14 @@ public final class QueryRequest {
   private final String queryId;
   private final Map<String, String> settings;
   private final Map<String, String> parameters;
+  private final Compression compression;
 
   private QueryRequest(Builder builder) {
     this.query = builder.query;
     this.queryId = builder.queryId != null ? builder.queryId : UUID.randomUUID().toString();
     this.settings = Map.copyOf(builder.settings);
     this.parameters = Map.copyOf(builder.parameters);
+    this.compression = builder.compression;
   }
 
   /**
@@ -101,6 +104,15 @@ public final class QueryRequest {
     return parameters;
   }
 
+  /**
+   * Returns the per query compression override, empty to use the connection's setting.
+   *
+   * @return the compression method
+   */
+  public java.util.Optional<Compression> compression() {
+    return java.util.Optional.ofNullable(compression);
+  }
+
   @Override
   public String toString() {
     // Query text can carry sensitive literals; never include it here.
@@ -114,6 +126,7 @@ public final class QueryRequest {
     private String queryId;
     private final Map<String, String> settings = new LinkedHashMap<>();
     private final Map<String, String> parameters = new LinkedHashMap<>();
+    private Compression compression;
 
     private Builder(String query) {
       this.query = Objects.requireNonNull(query, "query");
@@ -158,6 +171,17 @@ public final class QueryRequest {
     public Builder parameter(String name, Object value) {
       parameters.put(
           Objects.requireNonNull(name, "name"), Objects.requireNonNull(value, "value").toString());
+      return this;
+    }
+
+    /**
+     * Overrides the connection's compression for this request, at the method's default level.
+     *
+     * @param compression the method
+     * @return this builder
+     */
+    public Builder compression(Compression compression) {
+      this.compression = Objects.requireNonNull(compression, "compression");
       return this;
     }
 

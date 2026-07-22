@@ -15,7 +15,6 @@
  */
 package io.github.orhaugh.chord.client;
 
-import io.github.orhaugh.chord.codec.block.BlockWriter;
 import io.github.orhaugh.chord.protocol.ClientPacketType;
 import io.github.orhaugh.chord.protocol.ProtocolFeature;
 import io.github.orhaugh.chord.protocol.ProtocolRevisions;
@@ -46,13 +45,12 @@ final class QueryCodec {
   private QueryCodec() {}
 
   /**
-   * Writes a Query packet followed by the terminal empty external tables block.
-   *
-   * <p>The terminator is required for every query, INSERT included: the server's external tables
+   * Writes a Query packet. The caller must follow it with the terminal empty external tables Data
+   * packet, which is required for every query, INSERT included: the server's external tables
    * initializer runs inside {@code executeQuery} for all queries and consumes Data packets until an
    * empty block before the query pipeline starts. For an INSERT the streamed data then follows the
    * server's schema header and ends with its own, second, empty block. The caller remains
-   * responsible for flushing.
+   * responsible for packet boundaries and flushing.
    */
   static void writeQuery(
       WireWriter out,
@@ -60,7 +58,8 @@ final class QueryCodec {
       ConnectionOptions options,
       long negotiatedRevision,
       String osUser,
-      String hostname) {
+      String hostname,
+      boolean compressionEnabled) {
     out.writeVarUInt(ClientPacketType.QUERY.code());
     out.writeString(request.queryId());
 
@@ -86,7 +85,7 @@ final class QueryCodec {
     }
 
     out.writeVarUInt(STAGE_COMPLETE);
-    out.writeVarUInt(0); // compression disabled until Phase 4
+    out.writeVarUInt(compressionEnabled ? 1 : 0);
     out.writeString(request.query());
 
     if (ProtocolFeature.PARAMETERS.enabledFor(negotiatedRevision)) {
@@ -98,11 +97,6 @@ final class QueryCodec {
       }
       out.writeString("");
     }
-
-    // End of external tables: one empty Data block, required for every query kind.
-    out.writeVarUInt(ClientPacketType.DATA.code());
-    out.writeString(""); // external table name; empty means the main stream
-    BlockWriter.writeEmpty(out, negotiatedRevision);
   }
 
   private static void writeClientInfo(

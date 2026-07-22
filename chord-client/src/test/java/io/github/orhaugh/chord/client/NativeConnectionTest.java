@@ -179,15 +179,148 @@ class NativeConnectionTest {
   }
 
   @Test
-  void serverStrictlyRequiringChunkedFramingIsRefused() {
+  void chunkedStrictServersNegotiateAndExchangeChunkedPackets() {
     ScriptedTransport transport =
         new ScriptedTransport(
-            script(w -> writeServerHelloWithCapabilities(w, "chunked", "chunked")));
+            script(
+                w -> {
+                  // The hello itself is never chunked; framing starts after the addendum.
+                  writeServerHelloWithCapabilities(w, "chunked", "chunked");
+                  // Pong as one chunked message: [len 1][0x04][terminator 0].
+                  w.writeUInt8(1);
+                  w.writeUInt8(0);
+                  w.writeUInt8(0);
+                  w.writeUInt8(0);
+                  w.writeUInt8(4);
+                  w.writeInt32Le(0);
+                }));
 
-    assertThatThrownBy(() -> NativeConnection.open(options(), transport))
-        .isInstanceOf(ChordProtocolException.class)
-        .hasMessageContaining("chunked");
-    assertThat(transport.isOpen()).isFalse();
+    NativeConnection connection = NativeConnection.open(options(), transport);
+    connection.ping();
+    assertThat(connection.state()).isEqualTo(ConnectionState.READY);
+    connection.close();
+
+    byte[] expected =
+        script(
+            w -> {
+              HelloCodec.writeClientHello(
+                  w,
+                  new ClientHello(
+                      "CHord Java",
+                      NativeConnection.CLIENT_VERSION_MAJOR,
+                      NativeConnection.CLIENT_VERSION_MINOR,
+                      ProtocolRevisions.CURRENT,
+                      "",
+                      "default"),
+                  new char[0]);
+              HelloCodec.writeAddendum(
+                  w, SERVER_REVISION, "", ChunkedProtocolMode.CHUNKED, ChunkedProtocolMode.CHUNKED);
+              // Ping as one chunked message.
+              w.writeInt32Le(1);
+              w.writeUInt8(4);
+              w.writeInt32Le(0);
+            });
+    assertThat(transport.clientBytes()).isEqualTo(expected);
+  }
+
+  @Test
+  void compressedExchangesFrameBlockBodiesInBothDirections() {
+    // Server script: hello, then a compressed SELECT response of header block, one data block
+    // and EndOfStream, with block bodies framed.
+    byte[] responseBlocks =
+        script(
+            w -> {
+              io.github.orhaugh.chord.codec.column.BlockBuilder builder =
+                  io.github.orhaugh.chord.codec.column.BlockBuilder.forSchema(
+                      decodeSchema("v", "UInt8"));
+              builder.addRow(7);
+              io.github.orhaugh.chord.codec.block.BlockWriter.write(
+                  w, builder.build(), SERVER_REVISION);
+            });
+    java.io.ByteArrayOutputStream framed = new java.io.ByteArrayOutputStream();
+    var frameOut =
+        new io.github.orhaugh.chord.codec.compress.FrameCompressingOutputStream(
+            framed, io.github.orhaugh.chord.codec.compress.Compression.LZ4, 0);
+    frameOut.write(responseBlocks, 0, responseBlocks.length);
+    frameOut.flush();
+    byte[] framedBlock = framed.toByteArray();
+
+    ScriptedTransport transport =
+        new ScriptedTransport(
+            script(
+                w -> {
+                  writeServerHello(w);
+                  w.writeVarUInt(1); // Server::Data
+                  w.writeString("");
+                  w.writeBytes(framedBlock, 0, framedBlock.length);
+                  w.writeVarUInt(5); // EndOfStream
+                }));
+
+    ConnectionOptions compressed =
+        ConnectionOptions.builder()
+            .host("scripted")
+            .compression(io.github.orhaugh.chord.codec.compress.Compression.LZ4)
+            .build();
+    NativeConnection connection = NativeConnection.open(compressed, transport);
+    try (QueryResult result = connection.query(QueryRequest.of("SELECT 7"))) {
+      var block = result.nextBlock().orElseThrow();
+      assertThat(block.column(0).objectAt(0)).isEqualTo(7);
+      assertThat(result.nextBlock()).isEmpty();
+    }
+    assertThat(connection.state()).isEqualTo(ConnectionState.READY);
+
+    // The query packet must carry compression flag 1 and a framed external tables terminator.
+    byte[] clientBytes = transport.clientBytes();
+    byte[] plainQueryPrefix =
+        script(w -> w.writeVarUInt(1)); // Client::Query marker, just to locate the query packet
+    int queryStart = indexOf(clientBytes, plainQueryPrefix, 60);
+    assertThat(queryStart).isPositive();
+    // The terminator Data packet body is a compressed frame: method byte LZ4 after checksum.
+    byte[] dataMarker = {0x02, 0x00}; // Client::Data followed by empty table name
+    int dataStart = indexOf(clientBytes, dataMarker, queryStart);
+    assertThat(dataStart).isPositive();
+    assertThat(clientBytes[dataStart + 2 + 16] & 0xFF).isEqualTo(0x82);
+    connection.close();
+  }
+
+  private static io.github.orhaugh.chord.codec.block.Block decodeSchema(String name, String type) {
+    byte[] schemaBytes =
+        script(
+            w -> {
+              w.writeVarUInt(1);
+              w.writeBool(false);
+              w.writeVarUInt(2);
+              w.writeInt32Le(-1);
+              w.writeVarUInt(3);
+              w.writeVarUInt(0);
+              w.writeVarUInt(0);
+              w.writeVarUInt(1);
+              w.writeVarUInt(0);
+              w.writeString(name);
+              w.writeString(type);
+              w.writeUInt8(0);
+            });
+    return io.github.orhaugh.chord.codec.block.BlockReader.read(
+        new io.github.orhaugh.chord.protocol.wire.WireReader(
+            new java.io.ByteArrayInputStream(schemaBytes),
+            io.github.orhaugh.chord.protocol.wire.WireLimits.DEFAULTS),
+        new io.github.orhaugh.chord.codec.block.DecodeContext(
+            io.github.orhaugh.chord.codec.block.BlockLimits.DEFAULTS,
+            SERVER_REVISION,
+            java.time.ZoneId.of("UTC")));
+  }
+
+  private static int indexOf(byte[] haystack, byte[] needle, int from) {
+    outer:
+    for (int i = Math.max(0, from); i <= haystack.length - needle.length; i++) {
+      for (int j = 0; j < needle.length; j++) {
+        if (haystack[i + j] != needle[j]) {
+          continue outer;
+        }
+      }
+      return i;
+    }
+    return -1;
   }
 
   @Test

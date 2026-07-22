@@ -1,6 +1,8 @@
 # ADR-0009: Compression dependencies
 
-Status: Accepted (2026-07-21), implementation lands in Phase 4
+Status: Accepted (2026-07-21), implemented in Phase 4 (2026-07-22). The CityHash 1.0.2 port was
+cross validated against frames produced by the real `clickhouse-compressor` binary, not only
+captured traffic. `aircompressor` was not adopted; the codec SPI point remains open.
 
 ## Context
 
