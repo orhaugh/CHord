@@ -77,8 +77,8 @@ final class Defaults {
       case DateTimeType t -> Instant.EPOCH;
       case DateTime64Type t -> Instant.EPOCH;
       case UuidType t -> new UUID(0, 0);
-      case Ipv4Type t -> "0.0.0.0";
-      case Ipv6Type t -> new byte[16];
+      case Ipv4Type t -> zeroAddress(4);
+      case Ipv6Type t -> zeroAddress(16);
       case DecimalType t -> BigDecimal.ZERO;
       case IntervalType t -> 0L;
       case EnumType t -> zeroEnumLabel(t);
@@ -97,6 +97,15 @@ final class Defaults {
           throw new UnsupportedClickHouseTypeException(
               "No default value is defined for sparse columns of type " + type.name());
     };
+  }
+
+  /** The all zeros address, in the {@link java.net.InetAddress} form the IP appenders accept. */
+  private static java.net.InetAddress zeroAddress(int length) {
+    try {
+      return java.net.InetAddress.getByAddress(new byte[length]);
+    } catch (java.net.UnknownHostException e) {
+      throw new AssertionError("A " + length + " byte address literal cannot be malformed", e);
+    }
   }
 
   private static String zeroEnumLabel(EnumType type) {

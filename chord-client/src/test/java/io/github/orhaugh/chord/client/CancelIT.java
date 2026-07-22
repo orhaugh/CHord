@@ -106,6 +106,44 @@ class CancelIT {
   }
 
   @Test
+  void cancelFromAnotherThreadUnblocksTheConsumer() throws Exception {
+    try (NativeConnection connection = connect()) {
+      try (QueryResult result =
+          connection.query(
+              QueryRequest.builder("SELECT number FROM system.numbers")
+                  .setting("max_block_size", 4096)
+                  .build())) {
+        java.util.concurrent.CountDownLatch firstBlock = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<Throwable> consumerFailure =
+            new java.util.concurrent.atomic.AtomicReference<>();
+        // The consuming thread drains the unbounded stream; cancel() is documented as the one
+        // result method callable from a different thread.
+        Thread consumer =
+            Thread.ofVirtual()
+                .start(
+                    () -> {
+                      try {
+                        while (result.nextBlock().isPresent()) {
+                          firstBlock.countDown();
+                        }
+                      } catch (Throwable t) {
+                        consumerFailure.set(t);
+                      }
+                    });
+        assertThat(firstBlock.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        result.cancel();
+        consumer.join(java.time.Duration.ofSeconds(30));
+        assertThat(consumer.isAlive()).isFalse();
+        assertThat(consumerFailure.get()).isNull();
+      }
+      assertThat(connection.state()).isEqualTo(ConnectionState.READY);
+      try (QueryResult result = connection.query(QueryRequest.of("SELECT 7"))) {
+        assertThat(result.nextBlock().orElseThrow().column(0).objectAt(0)).isEqualTo(7);
+      }
+    }
+  }
+
+  @Test
   void queriesFinishingWithinTheirTimeoutAreUnaffected() {
     try (NativeConnection connection = connect();
         QueryResult result =

@@ -6,6 +6,25 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ## [Unreleased]
 
+### Fixed
+
+- Sparse IPv4 and IPv6 columns failed to materialise: the default value registry produced a
+  string and a raw byte array where the column builders require address values, so any
+  genuinely sparse IP column from a MergeTree table raised a type error instead of decoding.
+  Found by the coverage audit's sparse type family matrix (docs/test-coverage-audit.md).
+
+### Added
+
+- Coverage for every P0 gap in the test coverage audit: float special values (NaN, infinities,
+  negative zero) through codec, server and JDBC paths; DateTime64 at precisions 0, 6 and 9
+  with range extremes; abrupt connection loss mid SELECT stream and mid INSERT stream with
+  retry classification and connection state asserted; cross thread cancellation; sparse
+  materialisation across 22 type families plus a server verified mixed type sparse table;
+  LowCardinality four byte dictionary indexes in both directions and Date, FixedString and
+  UInt16 dictionary keys; query timeouts over TLS; every BlockLimits cap enforced through
+  hostile block decode; and boundary values for every integer, date, decimal and enum width,
+  written natively and read back against real servers.
+
 ## [0.1.0] - 2026-07-22
 
 First public release: the native TCP protocol client and its JDBC adapter, tested against

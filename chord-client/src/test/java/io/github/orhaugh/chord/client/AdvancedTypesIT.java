@@ -145,6 +145,161 @@ class AdvancedTypesIT {
   }
 
   @Test
+  void sparseColumnsMaterialiseAcrossTypeFamilies() {
+    try (NativeConnection connection = connect()) {
+      execute(
+          connection,
+          "CREATE TABLE sparse_mixed (id UInt32, d Decimal64(4), dt Date, ts DateTime,"
+              + " e Enum8('none' = 0, 'hit' = 1), u UUID, ip IPv6, f Float64)"
+              + " ENGINE = MergeTree ORDER BY id"
+              + " SETTINGS ratio_of_defaults_for_sparse_serialization = 0.5");
+      execute(
+          connection,
+          "INSERT INTO sparse_mixed SELECT number,"
+              + " if(number = 100, toDecimal64('12.3456', 4), toDecimal64(0, 4)),"
+              + " if(number = 200, toDate('2024-05-01'), toDate(0)),"
+              + " if(number = 300, toDateTime(1000000, 'UTC'), toDateTime(0, 'UTC')),"
+              + " if(number = 400, 'hit', 'none'),"
+              + " if(number = 500, toUUID('01234567-89ab-cdef-0123-456789abcdef'),"
+              + " toUUID('00000000-0000-0000-0000-000000000000')),"
+              + " if(number = 600, toIPv6('2001:db8::1'), toIPv6('::')),"
+              + " if(number = 700, 3.5, 0)"
+              + " FROM numbers(4000)");
+      // The test only proves sparse decode if the server genuinely chose sparse serialisation.
+      java.util.Set<String> sparseColumns = new java.util.HashSet<>();
+      try (QueryResult result =
+          connection.query(
+              QueryRequest.of(
+                  "SELECT DISTINCT column FROM system.parts_columns"
+                      + " WHERE database = currentDatabase() AND table = 'sparse_mixed'"
+                      + " AND serialization_kind = 'Sparse'"))) {
+        Optional<Block> next;
+        while ((next = result.nextBlock()).isPresent()) {
+          Block block = next.orElseThrow();
+          for (int i = 0; i < block.rows(); i++) {
+            sparseColumns.add(String.valueOf(block.column(0).objectAt(i)));
+          }
+        }
+      }
+      assertThat(sparseColumns).contains("d", "dt", "ts", "e", "u", "ip", "f");
+
+      try (QueryResult result =
+          connection.query(
+              QueryRequest.of("SELECT id, d, dt, ts, e, u, ip, f FROM sparse_mixed ORDER BY id"))) {
+        long seen = 0;
+        Optional<Block> next;
+        while ((next = result.nextBlock()).isPresent()) {
+          Block block = next.orElseThrow();
+          for (int i = 0; i < block.rows(); i++) {
+            long id = seen + i;
+            java.math.BigDecimal d = (java.math.BigDecimal) block.column(1).objectAt(i);
+            assertThat(d).isEqualByComparingTo(id == 100 ? "12.3456" : "0");
+            assertThat(block.column(2).objectAt(i))
+                .isEqualTo(
+                    id == 200
+                        ? java.time.LocalDate.of(2024, 5, 1)
+                        : java.time.LocalDate.ofEpochDay(0));
+            assertThat(block.column(3).objectAt(i))
+                .isEqualTo(
+                    id == 300
+                        ? java.time.Instant.ofEpochSecond(1_000_000)
+                        : java.time.Instant.EPOCH);
+            assertThat(block.column(4).objectAt(i)).isEqualTo(id == 400 ? "hit" : "none");
+            assertThat(block.column(5).objectAt(i))
+                .isEqualTo(
+                    id == 500
+                        ? java.util.UUID.fromString("01234567-89ab-cdef-0123-456789abcdef")
+                        : new java.util.UUID(0, 0));
+            assertThat(String.valueOf(block.column(6).objectAt(i)))
+                .contains(id == 600 ? "2001:db8" : ":");
+            assertThat(block.column(7).objectAt(i)).isEqualTo(id == 700 ? 3.5d : 0.0d);
+          }
+          seen += block.rows();
+        }
+        assertThat(seen).isEqualTo(4000);
+      }
+    }
+  }
+
+  @Test
+  void lowCardinalityDictionaryKeyTypesBeyondStringRoundTrip() {
+    try (NativeConnection connection = connect()) {
+      try (QueryResult result =
+          connection.query(
+              QueryRequest.builder(
+                      "CREATE TABLE lc_keys (id UInt32, ld LowCardinality(Date),"
+                          + " lf LowCardinality(FixedString(4)), ln LowCardinality(UInt16))"
+                          + " ENGINE = MergeTree ORDER BY id")
+                  .setting("allow_suspicious_low_cardinality_types", 1)
+                  .build())) {
+        result.nextBlock();
+      }
+      try (InsertStream insert = connection.insert(QueryRequest.of("INSERT INTO lc_keys VALUES"))) {
+        BlockBuilder builder = insert.newBlock();
+        for (int i = 0; i < 1000; i++) {
+          builder.addRow(
+              i, java.time.LocalDate.of(2024, 1, 1 + (i % 5)), "tag" + (i % 5), 100 + (i % 5));
+        }
+        insert.send(builder.build());
+        insert.finish();
+      }
+      try (QueryResult result =
+          connection.query(QueryRequest.of("SELECT id, ld, lf, ln FROM lc_keys ORDER BY id"))) {
+        long seen = 0;
+        Optional<Block> next;
+        while ((next = result.nextBlock()).isPresent()) {
+          Block block = next.orElseThrow();
+          for (int i = 0; i < block.rows(); i++) {
+            long id = seen + i;
+            int cycle = (int) (id % 5);
+            assertThat(block.column(1).objectAt(i))
+                .isEqualTo(java.time.LocalDate.of(2024, 1, 1 + cycle));
+            assertThat(block.column(2).objectAt(i)).isEqualTo("tag" + cycle);
+            assertThat(block.column(3).objectAt(i)).isEqualTo(100 + cycle);
+          }
+          seen += block.rows();
+        }
+        assertThat(seen).isEqualTo(1000);
+      }
+    }
+  }
+
+  @Test
+  void lowCardinalityWideDictionariesCrossTheFourByteIndexBoundary() {
+    try (NativeConnection connection = connect()) {
+      execute(
+          connection,
+          "CREATE TABLE lc_wide (v LowCardinality(String)) ENGINE = MergeTree ORDER BY tuple()");
+      int distinct = 70_000;
+      try (InsertStream insert = connection.insert(QueryRequest.of("INSERT INTO lc_wide VALUES"))) {
+        // One block with more than 65536 distinct values forces four byte dictionary indexes
+        // on our encode side; the server must accept them.
+        BlockBuilder builder = insert.newBlock();
+        for (int i = 0; i < distinct; i++) {
+          builder.addRow("k" + i);
+        }
+        insert.send(builder.build());
+        insert.finish();
+      }
+      try (QueryResult result =
+          connection.query(
+              QueryRequest.builder("SELECT v FROM lc_wide")
+                  .setting("max_block_size", 100_000)
+                  .build())) {
+        java.util.Set<String> values = new java.util.HashSet<>();
+        Optional<Block> next;
+        while ((next = result.nextBlock()).isPresent()) {
+          Block block = next.orElseThrow();
+          for (int i = 0; i < block.rows(); i++) {
+            values.add(String.valueOf(block.column(0).objectAt(i)));
+          }
+        }
+        assertThat(values).hasSize(distinct).contains("k0", "k65535", "k65536", "k69999");
+      }
+    }
+  }
+
+  @Test
   void variantColumnsDecodeOverTheWire() {
     try (NativeConnection connection = connect();
         QueryResult result =

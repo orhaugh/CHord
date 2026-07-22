@@ -153,6 +153,140 @@ class SparseDecodeTest {
     assertThat(column.isNullAt(5)).isTrue();
   }
 
+  /**
+   * One case per type family: a sparse column of five rows with one non default value at row two,
+   * encoded exactly as the server encodes it (offsets, then the values through the nested
+   * serialisation), must materialise the value at its row and the type's default everywhere else.
+   * This is the register that keeps {@code Defaults} honest for every family.
+   */
+  @Test
+  void everyTypeFamilyMaterialisesItsDefaultsAroundSparseValues() {
+    record SparseCase(
+        String typeName, Object sample, Object expectedSample, Object expectedDefault) {}
+    java.util.List<SparseCase> cases =
+        java.util.List.of(
+            new SparseCase("UInt16", 7, 7, 0),
+            new SparseCase("UInt32", 7L, 7L, 0L),
+            new SparseCase("Int16", -5, (short) -5, (short) 0),
+            new SparseCase("Int32", -5, -5, 0),
+            new SparseCase("Int64", -5L, -5L, 0L),
+            new SparseCase(
+                "Int128",
+                java.math.BigInteger.TEN.negate(),
+                java.math.BigInteger.TEN.negate(),
+                java.math.BigInteger.ZERO),
+            new SparseCase("Float32", 1.5f, 1.5f, 0.0f),
+            new SparseCase("Float64", 2.5d, 2.5d, 0.0d),
+            new SparseCase("BFloat16", 1.5f, 1.5f, 0.0f),
+            new SparseCase("Bool", true, true, false),
+            new SparseCase("FixedString(3)", "abc", "abc", ""),
+            new SparseCase(
+                "Date",
+                java.time.LocalDate.of(2024, 5, 1),
+                java.time.LocalDate.of(2024, 5, 1),
+                java.time.LocalDate.ofEpochDay(0)),
+            new SparseCase(
+                "Date32",
+                java.time.LocalDate.of(1969, 12, 31),
+                java.time.LocalDate.of(1969, 12, 31),
+                java.time.LocalDate.ofEpochDay(0)),
+            new SparseCase(
+                "DateTime",
+                java.time.Instant.ofEpochSecond(1_000_000),
+                java.time.Instant.ofEpochSecond(1_000_000),
+                java.time.Instant.EPOCH),
+            new SparseCase(
+                "DateTime64(3)",
+                java.time.Instant.ofEpochSecond(1_000_000, 123_000_000),
+                java.time.Instant.ofEpochSecond(1_000_000, 123_000_000),
+                java.time.Instant.EPOCH),
+            new SparseCase("IntervalDay", 5L, 5L, 0L),
+            new SparseCase(
+                "UUID",
+                java.util.UUID.fromString("0195a6de-3b3b-7000-8000-000000000042"),
+                java.util.UUID.fromString("0195a6de-3b3b-7000-8000-000000000042"),
+                new java.util.UUID(0, 0)),
+            new SparseCase("Enum8('none' = 0, 'hit' = 1)", "hit", "hit", "none"),
+            new SparseCase("Enum16('none' = 0, 'big' = 1000)", "big", "big", "none"),
+            new SparseCase(
+                "Array(UInt8)",
+                java.util.List.of(1, 2),
+                java.util.List.of(1, 2),
+                java.util.List.of()),
+            new SparseCase(
+                "Tuple(a UInt8, b String)",
+                java.util.List.of(3, "x"),
+                java.util.List.of(3, "x"),
+                java.util.List.of(0, "")),
+            new SparseCase(
+                "Map(String, UInt8)",
+                java.util.Map.of("k", 1),
+                java.util.Map.of("k", 1),
+                java.util.Map.of()));
+
+    for (SparseCase sparseCase : cases) {
+      Column column = decodeSparse(sparseCase.typeName(), sparseCase.sample());
+      assertThat(column.size()).as(sparseCase.typeName()).isEqualTo(5);
+      assertThat(column.objectAt(2))
+          .as(sparseCase.typeName() + " value")
+          .isEqualTo(sparseCase.expectedSample());
+      for (int row : new int[] {0, 1, 3, 4}) {
+        assertThat(column.objectAt(row))
+            .as(sparseCase.typeName() + " default at row " + row)
+            .isEqualTo(sparseCase.expectedDefault());
+      }
+    }
+  }
+
+  @Test
+  void sparseDecimalsMaterialiseZeroDefaults() {
+    Column column = decodeSparse("Decimal(10, 2)", new java.math.BigDecimal("12.34"));
+    assertThat((java.math.BigDecimal) column.objectAt(2)).isEqualByComparingTo("12.34");
+    assertThat((java.math.BigDecimal) column.objectAt(0)).isEqualByComparingTo("0");
+    assertThat((java.math.BigDecimal) column.objectAt(4)).isEqualByComparingTo("0");
+  }
+
+  @Test
+  void sparseIpColumnsMaterialiseZeroAddressDefaults() throws Exception {
+    Column ipv4 = decodeSparse("IPv4", java.net.InetAddress.getByName("9.8.7.6"));
+    assertThat(ipv4.objectAt(2)).isEqualTo(java.net.InetAddress.getByName("9.8.7.6"));
+    assertThat(ipv4.objectAt(0)).isEqualTo(java.net.InetAddress.getByName("0.0.0.0"));
+
+    Column ipv6 = decodeSparse("IPv6", java.net.InetAddress.getByName("2001:db8::1"));
+    assertThat(ipv6.objectAt(2)).isEqualTo(java.net.InetAddress.getByName("2001:db8::1"));
+    assertThat(ipv6.objectAt(0)).isEqualTo(java.net.InetAddress.getByName("::"));
+  }
+
+  @Test
+  void sparseEnumWithoutAZeroLabelFailsExplicitly() {
+    byte[] wire = bytes(w -> writeOffsets(w, new long[0], 5));
+    assertThatThrownBy(
+            () ->
+                ColumnReader.readSparse(
+                    new WireReader(new ByteArrayInputStream(wire), WireLimits.DEFAULTS),
+                    TypeParser.parse("Enum8('a' = 1)", 100, 8),
+                    5,
+                    context()))
+        .isInstanceOf(io.github.orhaugh.chord.codec.UnsupportedClickHouseTypeException.class)
+        .hasMessageContaining("zero valued label");
+  }
+
+  /** Encodes a five row sparse column with one value at row two and decodes it. */
+  private static Column decodeSparse(String typeName, Object sample) {
+    io.github.orhaugh.chord.codec.type.ClickHouseType type = TypeParser.parse(typeName, 10_000, 32);
+    BlockBuilder builder = BlockBuilder.forColumnTypes(java.util.List.of(type));
+    builder.addRow(sample);
+    Column values = builder.build().column(0);
+    byte[] wire =
+        bytes(
+            w -> {
+              writeOffsets(w, new long[] {2}, 5);
+              ColumnWriter.write(w, values);
+            });
+    return ColumnReader.readSparse(
+        new WireReader(new ByteArrayInputStream(wire), WireLimits.DEFAULTS), type, 5, context());
+  }
+
   @Test
   void offsetsBeyondTheBlockFailExplicitly() {
     byte[] wire =

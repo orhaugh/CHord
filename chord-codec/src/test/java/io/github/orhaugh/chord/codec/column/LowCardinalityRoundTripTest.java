@@ -136,6 +136,25 @@ class LowCardinalityRoundTripTest {
   }
 
   @Test
+  void dictionariesBeyondSixteenBitsUseFourByteIndexes() {
+    // 65537 distinct values plus the default slot pushes the dictionary past 65536 keys, the
+    // point where both encoder and decoder must switch from two byte to four byte indexes.
+    int distinct = 65_537;
+    BlockBuilder builder =
+        BlockBuilder.forColumnTypes(List.of(TypeParser.parse("LowCardinality(String)", 100, 8)));
+    for (int i = 0; i < distinct; i++) {
+      builder.addRow("k" + i);
+    }
+    Block decoded = roundTrip(builder.build());
+    Columns.LowCardinalityColumn column = (Columns.LowCardinalityColumn) decoded.column(0);
+    assertThat(column.size()).isEqualTo(distinct);
+    assertThat(column.dictionary().size()).isEqualTo(distinct + 1);
+    assertThat(column.objectAt(0)).isEqualTo("k0");
+    assertThat(column.objectAt(65_535)).isEqualTo("k65535");
+    assertThat(column.objectAt(65_536)).isEqualTo("k65536");
+  }
+
+  @Test
   void decodedColumnsReEncodeByteExactly() {
     BlockBuilder builder =
         BlockBuilder.forColumnTypes(List.of(TypeParser.parse("LowCardinality(String)", 100, 8)));

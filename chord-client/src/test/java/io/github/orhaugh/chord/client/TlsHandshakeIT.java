@@ -96,6 +96,28 @@ class TlsHandshakeIT {
   }
 
   @Test
+  void queryTimeoutsCancelCleanlyOverTls() {
+    // The deadline machinery polls the transport for readability; this proves the poll path
+    // over the TLS transport, where a read consumes decrypted bytes, not socket bytes.
+    try (NativeConnection connection = NativeConnection.open(secureOptions().build())) {
+      QueryRequest request =
+          QueryRequest.builder("SELECT count() FROM numbers(1000000000000)")
+              .timeout(java.time.Duration.ofMillis(500))
+              .build();
+      assertThatThrownBy(
+              () -> {
+                try (QueryResult result = connection.query(request)) {
+                  result.nextBlock();
+                }
+              })
+          .isInstanceOf(io.github.orhaugh.chord.ChordTimeoutException.class)
+          .hasMessageContaining("remains usable");
+      assertThat(connection.state()).isEqualTo(ConnectionState.READY);
+      connection.ping();
+    }
+  }
+
+  @Test
   void untrustedCertificateAuthorityIsRefused() {
     ConnectionOptions systemTrust = secureOptions().tls(TlsOptions.systemTrust()).build();
 

@@ -333,6 +333,23 @@ class JdbcIT {
   }
 
   @Test
+  void floatSpecialValuesSurfaceThroughTheGetters() throws SQLException {
+    try (Connection connection = connect();
+        Statement statement = connection.createStatement();
+        ResultSet rows = statement.executeQuery("SELECT nan, inf, -inf, toFloat32(nan), -0.0")) {
+      assertThat(rows.next()).isTrue();
+      assertThat(Double.isNaN(rows.getDouble(1))).isTrue();
+      assertThat(rows.wasNull()).isFalse(); // NaN is a value, not SQL NULL
+      assertThat(rows.getDouble(2)).isEqualTo(Double.POSITIVE_INFINITY);
+      assertThat(rows.getDouble(3)).isEqualTo(Double.NEGATIVE_INFINITY);
+      assertThat(Float.isNaN(rows.getFloat(4))).isTrue();
+      assertThat(Double.doubleToRawLongBits(rows.getDouble(5)))
+          .isEqualTo(Double.doubleToRawLongBits(-0.0d));
+      assertThat(Double.isNaN(rows.getObject(1, Double.class))).isTrue();
+    }
+  }
+
+  @Test
   void arraysComeBackAsLists() throws SQLException {
     try (Connection connection = connect();
         Statement statement = connection.createStatement();
