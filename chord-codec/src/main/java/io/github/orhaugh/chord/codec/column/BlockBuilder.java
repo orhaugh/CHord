@@ -760,7 +760,7 @@ public final class BlockBuilder {
 
     DateTimeAppender(ClickHouseType.DateTimeType type) {
       super(type);
-      this.zone = type.timezone().map(ZoneId::of).orElse(ZoneId.of("UTC"));
+      this.zone = type.timezone().map(Timezones::parse).orElse(ZoneId.of("UTC"));
     }
 
     @Override
@@ -803,7 +803,7 @@ public final class BlockBuilder {
     DateTime64Appender(ClickHouseType.DateTime64Type type) {
       super(type);
       this.precision = type.precision();
-      this.zone = type.timezone().map(ZoneId::of).orElse(ZoneId.of("UTC"));
+      this.zone = type.timezone().map(Timezones::parse).orElse(ZoneId.of("UTC"));
     }
 
     @Override

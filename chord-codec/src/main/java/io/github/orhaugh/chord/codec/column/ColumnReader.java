@@ -146,7 +146,7 @@ public final class ColumnReader {
   }
 
   private static ZoneId zoneFor(java.util.Optional<String> columnZone, DecodeContext context) {
-    return columnZone.map(ZoneId::of).orElse(context.serverTimezone());
+    return columnZone.map(Timezones::parse).orElse(context.serverTimezone());
   }
 
   private static Column readInteger(WireReader in, IntegerType type, int rows) {

@@ -33,4 +33,14 @@ public class ChordTypeException extends ChordException {
   public ChordTypeException(String message) {
     super(message);
   }
+
+  /**
+   * Creates a type exception with a cause.
+   *
+   * @param message description of the type problem
+   * @param cause the underlying failure
+   */
+  public ChordTypeException(String message, Throwable cause) {
+    super(message, cause);
+  }
 }

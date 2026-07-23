@@ -342,4 +342,22 @@ class SerializationGuardsTest {
     java.util.Map<String, Object> second = (java.util.Map<String, Object>) column.objectAt(1);
     assertThat(second).isEmpty();
   }
+
+  @Test
+  void malformedTimezonesInTypeDeclarationsFailTyped() {
+    // Pins a defect found by DecoderFuzzTest: a corrupt zone name in a wire type declaration
+    // escaped as a raw java.time.DateTimeException instead of a typed decode failure.
+    assertThatThrownBy(() -> decode("DateTime('N!ot/AZone')", 1, new byte[4]))
+        .isInstanceOf(io.github.orhaugh.chord.ChordTypeException.class)
+        .hasMessageContaining("Malformed timezone");
+    // The insert side resolves the same declarations when building appenders.
+    assertThatThrownBy(
+            () ->
+                BlockBuilder.forColumnTypes(
+                    java.util.List.of(
+                        io.github.orhaugh.chord.codec.type.TypeParser.parse(
+                            "DateTime64(3, 'N!ot/AZone')", 10_000, 32))))
+        .isInstanceOf(io.github.orhaugh.chord.ChordTypeException.class)
+        .hasMessageContaining("Malformed timezone");
+  }
 }
