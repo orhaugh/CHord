@@ -51,6 +51,7 @@ public final class ConnectionPool implements AutoCloseable {
 
   private final Supplier<NativeConnection> factory;
   private final int maxSize;
+  private final int minIdle;
   private final Duration acquireTimeout;
   private final Duration maxLifetime;
   private final Duration idleTimeout;
@@ -66,9 +67,18 @@ public final class ConnectionPool implements AutoCloseable {
 
   private final AtomicBoolean closed = new AtomicBoolean();
   private final AtomicLong detectedLeaks = new AtomicLong();
+  private final AtomicLong acquires = new AtomicLong();
+  private final AtomicLong acquireTimeouts = new AtomicLong();
+  private final AtomicLong acquireWaitNanos = new AtomicLong();
+  private final AtomicLong connectionsOpened = new AtomicLong();
+  private final AtomicLong connectionsDiscarded = new AtomicLong();
   private final Thread evictor;
 
-  private record IdleEntry(NativeConnection connection, long openedNanos, long idleSinceNanos) {}
+  private record IdleEntry(
+      NativeConnection connection,
+      long openedNanos,
+      long idleSinceNanos,
+      long lastValidatedNanos) {}
 
   private static final class Lease {
     final long acquiredNanos;
@@ -86,6 +96,7 @@ public final class ConnectionPool implements AutoCloseable {
   private ConnectionPool(Builder builder) {
     this.factory = builder.factory;
     this.maxSize = builder.maxSize;
+    this.minIdle = builder.minIdle;
     this.acquireTimeout = builder.acquireTimeout;
     this.maxLifetime = builder.maxLifetime;
     this.idleTimeout = builder.idleTimeout;
@@ -96,17 +107,23 @@ public final class ConnectionPool implements AutoCloseable {
     if (!leakDetectionThreshold.isZero()) {
       shortestConcern = Math.min(shortestConcern, leakDetectionThreshold.toMillis());
     }
+    if (minIdle > 0 && !validationInterval.isZero()) {
+      shortestConcern = Math.min(shortestConcern, validationInterval.toMillis());
+    }
     long periodMillis = Math.clamp(shortestConcern / 4, 250, 30000);
     this.evictor =
         Thread.ofVirtual()
             .name("chord-pool-evictor")
             .start(
                 () -> {
+                  // Maintain first so a configured minIdle warms up right after build().
                   while (!closed.get()) {
                     try {
-                      Thread.sleep(periodMillis);
                       evictExpiredIdle();
+                      keepAliveIdle();
+                      topUpIdle();
                       reportLeaks();
+                      Thread.sleep(periodMillis);
                     } catch (InterruptedException e) {
                       return;
                     } catch (RuntimeException e) {
@@ -159,13 +176,18 @@ public final class ConnectionPool implements AutoCloseable {
   private PooledConnection doAcquire(JfrEvents.PoolAcquireEvent event) {
     ensureOpen();
     boolean acquired;
+    long waitStart = System.nanoTime();
     try {
       acquired = permits.tryAcquire(acquireTimeout.toNanos(), TimeUnit.NANOSECONDS);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
+      acquireWaitNanos.addAndGet(System.nanoTime() - waitStart);
+      acquireTimeouts.incrementAndGet();
       throw new ChordTimeoutException("Interrupted while waiting for a pooled connection", e);
     }
+    acquireWaitNanos.addAndGet(System.nanoTime() - waitStart);
     if (!acquired) {
+      acquireTimeouts.incrementAndGet();
       throw new ChordTimeoutException(
           "Timed out after "
               + acquireTimeout
@@ -179,11 +201,13 @@ public final class ConnectionPool implements AutoCloseable {
       long openedNanos;
       if (connection == null) {
         connection = factory.get();
+        connectionsOpened.incrementAndGet();
         openedNanos = System.nanoTime();
         event.openedNewConnection = true;
       } else {
         openedNanos = openedNanosOf(connection);
       }
+      acquires.incrementAndGet();
       PooledConnection lease = new PooledConnection(this, connection);
       Throwable acquireSite =
           leakDetectionThreshold.isZero()
@@ -217,7 +241,7 @@ public final class ConnectionPool implements AutoCloseable {
         discard(connection);
         continue;
       }
-      if (now - entry.idleSinceNanos() >= validationInterval.toNanos()) {
+      if (now - entry.lastValidatedNanos() >= validationInterval.toNanos()) {
         try {
           connection.ping();
         } catch (ChordException e) {
@@ -250,13 +274,16 @@ public final class ConnectionPool implements AutoCloseable {
         discard(connection);
         return;
       }
-      idle.addFirst(new IdleEntry(connection, openedNanos, System.nanoTime()));
+      long now = System.nanoTime();
+      // A returned connection just finished a successful exchange: it counts as validated.
+      idle.addFirst(new IdleEntry(connection, openedNanos, now, now));
     } finally {
       permits.release();
     }
   }
 
   private void discard(NativeConnection connection) {
+    connectionsDiscarded.incrementAndGet();
     opened.remove(connection);
     connection.close();
   }
@@ -265,14 +292,69 @@ public final class ConnectionPool implements AutoCloseable {
     long now = System.nanoTime();
     // Iterate a snapshot; entries borrowed meanwhile are simply skipped by remove failing.
     for (IdleEntry entry : idle) {
-      boolean expired =
-          now - entry.idleSinceNanos() >= idleTimeout.toNanos()
-              || now - entry.openedNanos() >= maxLifetime.toNanos()
+      boolean unusable =
+          now - entry.openedNanos() >= maxLifetime.toNanos()
               || entry.connection().state() != ConnectionState.READY;
-      if (expired && idle.remove(entry)) {
+      // The idle timeout shrinks the pool only above the configured floor; lifetime and
+      // state problems always evict (the top up puts fresh connections back).
+      boolean pastIdleTimeout =
+          now - entry.idleSinceNanos() >= idleTimeout.toNanos() && idle.size() > minIdle;
+      if ((unusable || pastIdleTimeout) && idle.remove(entry)) {
         LOG.debug("evicting idle connection {}", entry.connection().id());
         discard(entry.connection());
       }
+    }
+  }
+
+  /**
+   * Pings idle connections whose last validation is older than the validation interval, so load
+   * balancer and NAT idle timers never see a silent connection. Failures discard the connection;
+   * the top up replaces it. Skipped when the interval is zero, which means validate on every borrow
+   * instead.
+   */
+  private void keepAliveIdle() {
+    if (validationInterval.isZero()) {
+      return;
+    }
+    long now = System.nanoTime();
+    for (IdleEntry entry : idle) {
+      if (now - entry.lastValidatedNanos() < validationInterval.toNanos()) {
+        continue;
+      }
+      if (!idle.remove(entry)) {
+        continue; // borrowed meanwhile
+      }
+      try {
+        entry.connection().ping();
+        idle.addLast(
+            new IdleEntry(
+                entry.connection(),
+                entry.openedNanos(),
+                entry.idleSinceNanos(),
+                System.nanoTime()));
+      } catch (ChordException e) {
+        LOG.debug("idle connection {} failed keep alive; discarding", entry.connection().id());
+        discard(entry.connection());
+      }
+    }
+  }
+
+  /** Opens connections until the idle floor is met, bounded by the pool's capacity. */
+  private void topUpIdle() {
+    while (!closed.get() && idle.size() < minIdle && idle.size() + leases.size() < maxSize) {
+      NativeConnection connection;
+      try {
+        connection = factory.get();
+      } catch (RuntimeException e) {
+        // The server may be unreachable right now; acquire() reports its own failures and
+        // the next maintenance cycle tries again.
+        LOG.debug("pool warm up could not open a connection", e);
+        return;
+      }
+      connectionsOpened.incrementAndGet();
+      long now = System.nanoTime();
+      opened.put(connection, now);
+      idle.addLast(new IdleEntry(connection, now, now, now));
     }
   }
 
@@ -318,6 +400,41 @@ public final class ConnectionPool implements AutoCloseable {
     return detectedLeaks.get();
   }
 
+  /**
+   * A monotonic snapshot of the pool's lifetime counters, suitable for metric registries: counts
+   * only ever grow, and {@code acquireWaitNanos} over {@code acquires} plus {@code acquireTimeouts}
+   * gives the mean wait.
+   *
+   * @param acquires leases handed out
+   * @param acquireTimeouts acquire attempts that timed out or were interrupted
+   * @param acquireWaitNanos total time spent waiting for a permit, nanoseconds
+   * @param connectionsOpened connections opened, by borrows and by warm up
+   * @param connectionsDiscarded connections closed by the pool for any reason
+   * @param leaksDetected leases reported as leaked by the maintenance thread
+   */
+  public record PoolStats(
+      long acquires,
+      long acquireTimeouts,
+      long acquireWaitNanos,
+      long connectionsOpened,
+      long connectionsDiscarded,
+      long leaksDetected) {}
+
+  /**
+   * Returns a snapshot of the pool's lifetime counters.
+   *
+   * @return the current counter values
+   */
+  public PoolStats stats() {
+    return new PoolStats(
+        acquires.get(),
+        acquireTimeouts.get(),
+        acquireWaitNanos.get(),
+        connectionsOpened.get(),
+        connectionsDiscarded.get(),
+        detectedLeaks.get());
+  }
+
   private void ensureOpen() {
     if (closed.get()) {
       throw new IllegalStateException("The pool is closed");
@@ -346,6 +463,7 @@ public final class ConnectionPool implements AutoCloseable {
 
     private final Supplier<NativeConnection> factory;
     private int maxSize = 8;
+    private int minIdle;
     private Duration acquireTimeout = Duration.ofSeconds(30);
     private Duration maxLifetime = Duration.ofMinutes(30);
     private Duration idleTimeout = Duration.ofMinutes(10);
@@ -367,6 +485,23 @@ public final class ConnectionPool implements AutoCloseable {
         throw new ChordConfigurationException("maxSize must be at least 1");
       }
       this.maxSize = maxSize;
+      return this;
+    }
+
+    /**
+     * Sets the idle connection floor. The maintenance thread opens connections in the background
+     * until this many sit idle, both at start (so first requests skip the connection handshake) and
+     * after evictions, and pings them on the validation cadence so load balancer and NAT idle
+     * timers never fire. Defaults to zero: fully lazy.
+     *
+     * @param minIdle the floor, zero or positive and at most {@code maxSize}
+     * @return this builder
+     */
+    public Builder minIdle(int minIdle) {
+      if (minIdle < 0) {
+        throw new ChordConfigurationException("minIdle must not be negative");
+      }
+      this.minIdle = minIdle;
       return this;
     }
 
@@ -448,11 +583,16 @@ public final class ConnectionPool implements AutoCloseable {
     }
 
     /**
-     * Builds the pool. Connections open lazily on first acquire.
+     * Builds the pool. Connections open lazily on first acquire unless {@link #minIdle(int)}
+     * configures a warm floor, which the maintenance thread fills in the background.
      *
      * @return the pool
      */
     public ConnectionPool build() {
+      if (minIdle > maxSize) {
+        throw new ChordConfigurationException(
+            "minIdle (" + minIdle + ") must not exceed maxSize (" + maxSize + ")");
+      }
       return new ConnectionPool(this);
     }
   }

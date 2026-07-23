@@ -280,6 +280,78 @@ class ConnectionPoolTest {
   }
 
   @Test
+  void minIdleWarmsThePoolAndSurvivesIdleTimeouts() throws Exception {
+    try (LoopbackPingServer server = new LoopbackPingServer();
+        ConnectionPool pool =
+            ConnectionPool.builder(server.options())
+                .maxSize(4)
+                .minIdle(2)
+                .idleTimeout(Duration.ofMillis(200))
+                .validationInterval(Duration.ofMillis(200))
+                .build()) {
+      // The maintenance thread fills the floor without any acquire.
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      while (pool.idleCount() < 2 && System.nanoTime() < deadline) {
+        Thread.sleep(20);
+      }
+      assertThat(pool.idleCount()).isEqualTo(2);
+      assertThat(server.acceptedConnections()).isEqualTo(2);
+
+      // Well past the idle timeout the floor still stands: keep alive pings hold the
+      // connections open and the idle eviction never shrinks below the floor.
+      Thread.sleep(600);
+      assertThat(pool.idleCount()).isEqualTo(2);
+      assertThat(server.acceptedConnections()).isEqualTo(2); // the same two, kept alive
+
+      // A warmed connection serves the first acquire without a fresh handshake.
+      try (PooledConnection lease = pool.acquire()) {
+        lease.ping();
+      }
+      assertThat(server.acceptedConnections()).isEqualTo(2);
+    }
+  }
+
+  @Test
+  void minIdleRefillsAfterTheServerDropsTheFloor() throws Exception {
+    try (LoopbackPingServer server = new LoopbackPingServer();
+        ConnectionPool pool =
+            ConnectionPool.builder(server.options())
+                .maxSize(4)
+                .minIdle(2)
+                .validationInterval(Duration.ofMillis(150))
+                .build()) {
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      while (pool.idleCount() < 2 && System.nanoTime() < deadline) {
+        Thread.sleep(20);
+      }
+      server.dropAllConnections();
+      // Keep alive notices the dead connections and the top up replaces them.
+      deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      while ((pool.idleCount() < 2 || server.acceptedConnections() < 4)
+          && System.nanoTime() < deadline) {
+        Thread.sleep(20);
+      }
+      assertThat(pool.idleCount()).isEqualTo(2);
+      assertThat(server.acceptedConnections()).isEqualTo(4);
+    }
+  }
+
+  @Test
+  void minIdleAboveMaxSizeIsRefused() {
+    assertThatThrownBy(
+            () ->
+                ConnectionPool.builder(
+                        () -> {
+                          throw new io.github.orhaugh.chord.ChordTransportException("never");
+                        })
+                    .maxSize(2)
+                    .minIdle(3)
+                    .build())
+        .isInstanceOf(io.github.orhaugh.chord.ChordConfigurationException.class)
+        .hasMessageContaining("minIdle");
+  }
+
+  @Test
   void poolSurvivesAServerRestartUnderConcurrentLoad() throws Exception {
     try (LoopbackPingServer server = new LoopbackPingServer();
         ConnectionPool pool = ConnectionPool.builder(server.options()).maxSize(4).build()) {
