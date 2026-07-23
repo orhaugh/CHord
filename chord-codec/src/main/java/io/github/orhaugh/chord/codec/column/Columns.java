@@ -564,7 +564,6 @@ public final class Columns {
     }
   }
 
-  /** DateTime column: unsigned seconds since the epoch with its column or session zone. */
   /** Time column: signed seconds beyond calendar semantics, surfacing as {@link Duration}. */
   public static final class TimeColumn extends Base {
     private final int[] seconds;
