@@ -435,6 +435,10 @@ public final class NativeConnection implements AutoCloseable {
           localHostname(),
           activeCompression != null);
       endPacket();
+      for (java.util.Map.Entry<String, io.github.orhaugh.chord.codec.block.Block> external :
+          request.externalTables().entrySet()) {
+        sendNamedDataPacket(external.getKey(), external.getValue());
+      }
       sendEmptyDataPacket();
       out.flush();
       state.transitionTo(ConnectionState.READING_RESPONSE);
@@ -497,6 +501,21 @@ public final class NativeConnection implements AutoCloseable {
       body.flush();
     } else {
       BlockWriter.writeEmpty(out, negotiatedRevision);
+    }
+    endPacket();
+  }
+
+  /** Sends one named Data packet: an external table travelling ahead of query execution. */
+  private void sendNamedDataPacket(String name, io.github.orhaugh.chord.codec.block.Block block) {
+    out.writeVarUInt(ClientPacketType.DATA.code());
+    out.writeString(name);
+    if (activeCompression != null) {
+      out.flush();
+      WireWriter body = frameWriter();
+      BlockWriter.write(body, block, negotiatedRevision);
+      body.flush();
+    } else {
+      BlockWriter.write(out, block, negotiatedRevision);
     }
     endPacket();
   }

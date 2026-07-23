@@ -44,6 +44,7 @@ public final class QueryRequest {
       progressListener;
   private final java.util.function.Consumer<ServerLogEntry> logListener;
   private final TraceContext traceContext;
+  private final java.util.Map<String, io.github.orhaugh.chord.codec.block.Block> externalTables;
 
   private QueryRequest(Builder builder) {
     this.query = builder.query;
@@ -55,6 +56,9 @@ public final class QueryRequest {
     this.progressListener = builder.progressListener;
     this.logListener = builder.logListener;
     this.traceContext = builder.traceContext;
+    this.externalTables =
+        java.util.Collections.unmodifiableMap(
+            new java.util.LinkedHashMap<>(builder.externalTables));
   }
 
   /**
@@ -142,17 +146,21 @@ public final class QueryRequest {
   }
 
   /**
-   * Returns the server log listener, empty for none.
-   *
-   * @return the log listener
-   */
-  /**
    * Returns the OpenTelemetry trace context to propagate with this query, if any.
    *
    * @return the trace context
    */
   public java.util.Optional<TraceContext> traceContext() {
     return java.util.Optional.ofNullable(traceContext);
+  }
+
+  /**
+   * Returns the external tables sent with this query, in insertion order.
+   *
+   * @return an unmodifiable map of table name to data block
+   */
+  public java.util.Map<String, io.github.orhaugh.chord.codec.block.Block> externalTables() {
+    return externalTables;
   }
 
   /**
@@ -223,6 +231,8 @@ public final class QueryRequest {
     private java.util.function.Consumer<io.github.orhaugh.chord.protocol.Progress> progressListener;
     private java.util.function.Consumer<ServerLogEntry> logListener;
     private TraceContext traceContext;
+    private final java.util.Map<String, io.github.orhaugh.chord.codec.block.Block> externalTables =
+        new java.util.LinkedHashMap<>();
 
     private Builder(String query) {
       this.query = Objects.requireNonNull(query, "query");
@@ -343,6 +353,25 @@ public final class QueryRequest {
      */
     public Builder traceContext(String traceParent, String traceState) {
       this.traceContext = TraceContext.parse(traceParent, traceState);
+      return this;
+    }
+
+    /**
+     * Attaches an external table: the block travels ahead of query execution and is visible to this
+     * query as a temporary table under the given name, the native protocol's mechanism for joining
+     * client side data without an INSERT. Build the block with {@code
+     * BlockBuilder.forColumnTypes(types, names)}. Repeated names replace earlier blocks.
+     *
+     * @param name the table name the query references
+     * @param block the named, typed data block
+     * @return this builder
+     */
+    public Builder externalTable(String name, io.github.orhaugh.chord.codec.block.Block block) {
+      if (java.util.Objects.requireNonNull(name, "name").isEmpty()) {
+        throw new io.github.orhaugh.chord.ChordConfigurationException(
+            "External table names must not be empty; the empty name is the main data stream");
+      }
+      externalTables.put(name, java.util.Objects.requireNonNull(block, "block"));
       return this;
     }
 

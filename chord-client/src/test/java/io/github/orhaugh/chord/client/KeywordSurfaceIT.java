@@ -385,6 +385,81 @@ class KeywordSurfaceIT {
   }
 
   @Test
+  void externalTablesJoinIntoQueries() {
+    io.github.orhaugh.chord.codec.block.Block labels =
+        BlockBuilder.forColumnTypes(
+                List.of(
+                    io.github.orhaugh.chord.codec.type.TypeParser.parse("UInt64", 10_000, 32),
+                    io.github.orhaugh.chord.codec.type.TypeParser.parse("String", 10_000, 32)),
+                List.of("id", "label"))
+            .addRow(BigInteger.ONE, "one")
+            .addRow(BigInteger.TWO, "two")
+            .addRow(BigInteger.valueOf(5), "five")
+            .build();
+    try (NativeConnection connection = connect()) {
+      // The block is visible as a temporary table for exactly this query.
+      try (QueryResult result =
+          connection.query(
+              QueryRequest.builder(
+                      "SELECT label FROM numbers(10) AS n INNER JOIN ext_labels"
+                          + " ON n.number = ext_labels.id ORDER BY n.number")
+                  .externalTable("ext_labels", labels)
+                  .build())) {
+        List<Object> found = new ArrayList<>();
+        java.util.Optional<Block> block;
+        while ((block = result.nextBlock()).isPresent()) {
+          for (int row = 0; row < block.get().rows(); row++) {
+            found.add(block.get().column(0).objectAt(row));
+          }
+        }
+        assertThat(found).containsExactly("one", "two", "five");
+      }
+      // The temporary table does not outlive its query.
+      assertThat(scalarLong(connection, "EXISTS TEMPORARY TABLE ext_labels")).isZero();
+      assertThat(connection.state().name()).isEqualTo("READY");
+    }
+  }
+
+  /** Row shape for the record mapping round trip. */
+  record Reading(long id, String sensor, Double value) {}
+
+  @Test
+  void recordsRoundTripThroughInsertAndSelect() {
+    try (NativeConnection connection = connect()) {
+      execute(
+          connection,
+          "CREATE TABLE kw_records (id UInt64, sensor String, value Nullable(Float64))"
+              + " ENGINE = MergeTree ORDER BY id");
+      List<Reading> readings =
+          List.of(
+              new Reading(1, "s-1", 21.5),
+              new Reading(2, "s-2", null),
+              new Reading(3, "s-1", 19.25));
+      try (InsertStream insert =
+          connection.insert(QueryRequest.of("INSERT INTO kw_records VALUES"))) {
+        assertThat(Records.insertAll(insert, readings, 2)).isEqualTo(3);
+        insert.finish();
+      }
+      try (QueryResult result =
+          connection.query(
+              QueryRequest.of("SELECT id, sensor, value FROM kw_records ORDER BY id"))) {
+        List<Reading> decoded = Records.stream(result, Reading.class).toList();
+        assertThat(decoded).containsExactlyElementsOf(readings);
+      }
+      // Mismatches fail typed, naming the offender.
+      record Wrong(long id, String missing_column) {}
+      try (QueryResult result =
+          connection.query(QueryRequest.of("SELECT id, sensor FROM kw_records"))) {
+        assertThat(
+                org.assertj.core.api.Assertions.catchThrowable(
+                    () -> Records.stream(result, Wrong.class).toList()))
+            .isInstanceOf(io.github.orhaugh.chord.ChordTypeException.class)
+            .hasMessageContaining("missing_column");
+      }
+    }
+  }
+
+  @Test
   void classicMutationDeleteAndProcesslistOperate() {
     try (NativeConnection connection = connect()) {
       execute(connection, "CREATE TABLE kw_alter_del (id UInt64) ENGINE = MergeTree ORDER BY id");
