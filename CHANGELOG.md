@@ -4,7 +4,7 @@ All notable changes to CHord are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows semantic
 versioning once 1.0.0 is released; before that, any 0.x release may change the API.
 
-## [Unreleased]
+## [0.2.0] - 2026-07-23
 
 ### Added
 

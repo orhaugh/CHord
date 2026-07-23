@@ -34,8 +34,9 @@ Release credentials never live in the repository.
 ## Cutting a release
 
 1. Ensure `main` is green, including the nightly compatibility workflow.
-2. Update the version: `./mvnw versions:set -DnewVersion=0.1.0` (and commit), move the
-   `Unreleased` changelog section under the new version with a date.
+2. Update the version: `./mvnw versions:set -DnewVersion=<version> -DprocessAllModules
+   -DgenerateBackupPoms=false` (and commit), move the `Unreleased` changelog section under
+   the new version with a date.
 3. Refresh `project.build.outputTimestamp` in the parent POM (reproducible builds).
 4. Local validation without uploading:
 
@@ -44,7 +45,7 @@ Release credentials never live in the repository.
    ./mvnw -Prelease deploy -DskipPublishing=true
    ```
 
-5. Tag signed: `git tag -s v0.1.0 -m "CHord 0.1.0"` and push the tag.
+5. Tag signed: `git tag -s v<version> -m "CHord <version>"` and push the tag.
 6. Run the Release workflow (Actions, Release) with `dry_run: true` first; inspect the uploaded
    artifact bundle (jars, sources, javadoc, signatures, SBOM).
 7. Run it again with `dry_run: false`. The build uploads a bundle to the Central portal with

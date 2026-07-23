@@ -10,7 +10,7 @@ internal abstraction, no wrapping of `clickhouse-client`.
 
 ## Status
 
-**0.1.0 is the first public release.** Before 1.0.0 any 0.x release may change the API; the
+**0.2.0 is the current release.** Before 1.0.0 any 0.x release may change the API; the
 changelog calls out every break. What ships today is implemented against the current ClickHouse
 sources and tested against real servers, 460+ automated tests swept across three server
 versions on every commit, with mutation fuzzing over the decoders, fault injection at every
@@ -59,7 +59,7 @@ protocol revision 54458 are refused explicitly. A protocol revision is not a ser
 
 ## Using it today
 
-The first Maven Central release (0.1.0) ships under these coordinates, aligned by the BOM:
+Maven Central releases ship under these coordinates, aligned by the BOM:
 
 ```xml
 <dependencyManagement>
@@ -67,7 +67,7 @@ The first Maven Central release (0.1.0) ships under these coordinates, aligned b
     <dependency>
       <groupId>io.github.orhaugh</groupId>
       <artifactId>chord-bom</artifactId>
-      <version>0.1.0</version>
+      <version>0.2.0</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>

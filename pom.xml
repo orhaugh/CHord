@@ -21,7 +21,7 @@
 
   <groupId>io.github.orhaugh</groupId>
   <artifactId>chord-parent</artifactId>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
   <packaging>pom</packaging>
 
   <name>CHord Parent</name>
@@ -80,7 +80,7 @@
     <!-- Published bytecode baseline. Development and CI also run newer JDKs. -->
     <maven.compiler.release>21</maven.compiler.release>
     <!-- Reproducible builds. Updated by the release process. -->
-    <project.build.outputTimestamp>2026-07-22T19:46:37Z</project.build.outputTimestamp>
+    <project.build.outputTimestamp>2026-07-23T22:09:53Z</project.build.outputTimestamp>
 
     <!-- Modules opt out where annotation processing makes -Werror impractical. -->
     <chord.compiler.failOnWarning>true</chord.compiler.failOnWarning>
