@@ -154,4 +154,60 @@ class QueryCodecTest {
     assertThat(QueryCodec.quoteFieldDump("a\\b")).isEqualTo("'a\\\\b'");
     assertThat(QueryCodec.quoteFieldDump("line\nbreak")).isEqualTo("'line\\nbreak'");
   }
+
+  @org.junit.jupiter.api.Test
+  void traceContextsTravelInsideClientInfo() {
+    ConnectionOptions options = ConnectionOptions.builder().host("h").build();
+    QueryRequest.TraceContext context =
+        QueryRequest.TraceContext.parse(
+            "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", "vendor=x");
+    assertThat(context.traceIdHigh()).isEqualTo(0x0af7651916cd43ddL);
+    assertThat(context.traceIdLow()).isEqualTo(0x8448eb211c80319cL);
+    assertThat(context.spanId()).isEqualTo(0xb7ad6b7169203331L);
+    assertThat(context.traceFlags()).isEqualTo((byte) 1);
+
+    QueryRequest with =
+        QueryRequest.builder("SELECT 1")
+            .queryId("qid")
+            .traceContext("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", "vendor=x")
+            .build();
+    QueryRequest without = QueryRequest.builder("SELECT 1").queryId("qid").build();
+
+    byte[] encodedWith =
+        written(w -> QueryCodec.writeQuery(w, with, options, 54488, "u", "h", false));
+    byte[] encodedWithout =
+        written(w -> QueryCodec.writeQuery(w, without, options, 54488, "u", "h", false));
+
+    byte[] traceSection =
+        written(
+            w -> {
+              w.writeUInt8(1);
+              w.writeInt64Le(0x0af7651916cd43ddL);
+              w.writeInt64Le(0x8448eb211c80319cL);
+              w.writeInt64Le(0xb7ad6b7169203331L);
+              w.writeString("vendor=x");
+              w.writeUInt8(1);
+            });
+    assertThat(indexOf(encodedWith, traceSection)).isNotNegative();
+    assertThat(indexOf(encodedWithout, traceSection)).isNegative();
+    assertThat(encodedWith.length).isEqualTo(encodedWithout.length + traceSection.length - 1);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> QueryRequest.TraceContext.parse("not-a-traceparent", ""))
+        .isInstanceOf(io.github.orhaugh.chord.ChordConfigurationException.class)
+        .hasMessageContaining("Malformed traceparent");
+  }
+
+  private static int indexOf(byte[] haystack, byte[] needle) {
+    outer:
+    for (int i = 0; i <= haystack.length - needle.length; i++) {
+      for (int j = 0; j < needle.length; j++) {
+        if (haystack[i + j] != needle[j]) {
+          continue outer;
+        }
+      }
+      return i;
+    }
+    return -1;
+  }
 }

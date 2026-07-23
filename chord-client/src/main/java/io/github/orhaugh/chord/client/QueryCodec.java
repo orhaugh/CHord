@@ -130,7 +130,20 @@ final class QueryCodec {
       out.writeVarUInt(0); // client_version_patch
     }
     if (ProtocolFeature.OPENTELEMETRY.enabledFor(negotiatedRevision)) {
-      out.writeUInt8(0); // no trace context
+      java.util.Optional<QueryRequest.TraceContext> trace = request.traceContext();
+      if (trace.isPresent()) {
+        QueryRequest.TraceContext context = trace.get();
+        out.writeUInt8(1);
+        // The trace id travels as a UUID: high half then low half, little endian each,
+        // matching the UUID column wire convention.
+        out.writeInt64Le(context.traceIdHigh());
+        out.writeInt64Le(context.traceIdLow());
+        out.writeInt64Le(context.spanId());
+        out.writeString(context.traceState());
+        out.writeUInt8(context.traceFlags() & 0xFF);
+      } else {
+        out.writeUInt8(0); // no trace context
+      }
     }
     if (ProtocolFeature.PARALLEL_REPLICAS.enabledFor(negotiatedRevision)) {
       out.writeVarUInt(0); // collaborate_with_initiator

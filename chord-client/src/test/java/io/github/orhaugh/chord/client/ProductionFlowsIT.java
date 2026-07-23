@@ -245,6 +245,33 @@ class ProductionFlowsIT {
   }
 
   @Test
+  void traceContextsReachTheServerSpanLog() {
+    // A W3C traceparent with the sampled flag: the server must record its spans under the
+    // caller's trace id, joining CHord queries into distributed traces.
+    String traceIdHex = "1af7651916cd43dd8448eb211c80319c";
+    String traceIdUuid = "1af76519-16cd-43dd-8448-eb211c80319c";
+    try (NativeConnection connection = connect()) {
+      try (QueryResult result =
+          connection.query(
+              QueryRequest.builder("SELECT count() FROM numbers(1000)")
+                  .traceContext("00-" + traceIdHex + "-b7ad6b7169203331-01", "")
+                  .build())) {
+        while (result.nextBlock().isPresent()) {
+          // Drain.
+        }
+      }
+      execute(connection, "SYSTEM FLUSH LOGS");
+      assertThat(
+              scalarLong(
+                  connection,
+                  "SELECT count() FROM system.opentelemetry_span_log WHERE trace_id = toUUID('"
+                      + traceIdUuid
+                      + "')"))
+          .isPositive();
+    }
+  }
+
+  @Test
   void sessionSettingsPersistAcrossQueriesOnOneConnection() {
     try (NativeConnection connection = connect()) {
       execute(connection, "SET max_result_rows = 987654");

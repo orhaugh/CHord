@@ -43,6 +43,7 @@ public final class QueryRequest {
   private final java.util.function.Consumer<io.github.orhaugh.chord.protocol.Progress>
       progressListener;
   private final java.util.function.Consumer<ServerLogEntry> logListener;
+  private final TraceContext traceContext;
 
   private QueryRequest(Builder builder) {
     this.query = builder.query;
@@ -53,6 +54,7 @@ public final class QueryRequest {
     this.timeout = builder.timeout;
     this.progressListener = builder.progressListener;
     this.logListener = builder.logListener;
+    this.traceContext = builder.traceContext;
   }
 
   /**
@@ -144,6 +146,61 @@ public final class QueryRequest {
    *
    * @return the log listener
    */
+  /**
+   * Returns the OpenTelemetry trace context to propagate with this query, if any.
+   *
+   * @return the trace context
+   */
+  public java.util.Optional<TraceContext> traceContext() {
+    return java.util.Optional.ofNullable(traceContext);
+  }
+
+  /**
+   * An OpenTelemetry trace context parsed from the W3C {@code traceparent} header form, propagated
+   * inside the Query packet so server side spans join the caller's trace.
+   *
+   * @param traceIdHigh the high 64 bits of the trace id
+   * @param traceIdLow the low 64 bits of the trace id
+   * @param spanId the parent span id
+   * @param traceState the {@code tracestate} header value, empty for none
+   * @param traceFlags the trace flags byte; bit 0 is sampled
+   */
+  public record TraceContext(
+      long traceIdHigh, long traceIdLow, long spanId, String traceState, byte traceFlags) {
+
+    private static final java.util.regex.Pattern TRACEPARENT =
+        java.util.regex.Pattern.compile("00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})");
+
+    /**
+     * Parses a W3C traceparent value, for example {@code
+     * 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01}.
+     *
+     * @param traceParent the header value
+     * @param traceState the tracestate header value, empty for none
+     * @return the parsed context
+     */
+    public static TraceContext parse(String traceParent, String traceState) {
+      java.util.regex.Matcher matcher =
+          TRACEPARENT.matcher(java.util.Objects.requireNonNull(traceParent, "traceParent"));
+      if (!matcher.matches()) {
+        throw new io.github.orhaugh.chord.ChordConfigurationException(
+            "Malformed traceparent; expected 00-<32 hex>-<16 hex>-<2 hex>: " + traceParent);
+      }
+      String traceId = matcher.group(1);
+      return new TraceContext(
+          Long.parseUnsignedLong(traceId.substring(0, 16), 16),
+          Long.parseUnsignedLong(traceId.substring(16), 16),
+          Long.parseUnsignedLong(matcher.group(2), 16),
+          java.util.Objects.requireNonNull(traceState, "traceState"),
+          (byte) Integer.parseInt(matcher.group(3), 16));
+    }
+  }
+
+  /**
+   * Returns the server log listener, if any.
+   *
+   * @return the listener receiving server log entries
+   */
   public java.util.Optional<java.util.function.Consumer<ServerLogEntry>> logListener() {
     return java.util.Optional.ofNullable(logListener);
   }
@@ -165,6 +222,7 @@ public final class QueryRequest {
     private java.time.Duration timeout;
     private java.util.function.Consumer<io.github.orhaugh.chord.protocol.Progress> progressListener;
     private java.util.function.Consumer<ServerLogEntry> logListener;
+    private TraceContext traceContext;
 
     private Builder(String query) {
       this.query = Objects.requireNonNull(query, "query");
@@ -270,6 +328,21 @@ public final class QueryRequest {
      */
     public Builder onLog(java.util.function.Consumer<ServerLogEntry> listener) {
       this.logListener = Objects.requireNonNull(listener, "listener");
+      return this;
+    }
+
+    /**
+     * Propagates an OpenTelemetry trace context with this query, from the W3C header values, so
+     * server side spans (visible in {@code system.opentelemetry_span_log}) join the caller's trace.
+     * No OpenTelemetry dependency is required: pass the header strings your propagator produces.
+     *
+     * @param traceParent the {@code traceparent} value, {@code 00-&lt;trace id&gt;-&lt;span
+     *     id&gt;-&lt;flags&gt;}
+     * @param traceState the {@code tracestate} value, empty for none
+     * @return this builder
+     */
+    public Builder traceContext(String traceParent, String traceState) {
+      this.traceContext = TraceContext.parse(traceParent, traceState);
       return this;
     }
 
