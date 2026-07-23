@@ -39,7 +39,7 @@ blocks), JDBC (mapping in the JDBC adapter), Object (row object mapping).
 | Geometry aliases (Point, Ring, Polygon, MultiPolygon, LineString, MultiLineString) | Yes | Yes (as their native tuple and array shapes) | Yes (as their native shapes) | No | No | Native representations of nested types |
 | Variant | Yes | Yes | Yes (by type inference) | Yes (native representation via getObject) | Unscheduled | Basic and compact discriminator modes; writes infer the alternative in name sorted order, NULL takes the null discriminator |
 | Dynamic | Yes | Yes | Yes (by type discovery) | Yes (native representation via getObject) | Unscheduled | V1 and V2 structure read, V2 written; writes discover Int64/String/Float64/Bool/DateTime64(9)/UUID/Date32; shared variant never written |
-| JSON | Yes | Yes | Yes (untyped, from path maps) | Yes (path map via getObject) | Unscheduled | V1 and V2 read, V2 written; writes take maps with dotted or nested paths onto dynamic paths, absent paths NULL; typed path declarations not writable yet |
+| JSON | Yes | Yes | Yes (from path maps) | Yes (path map via getObject) | Unscheduled | V1 and V2 read, V1 written for cross version compatibility; maps with dotted or nested paths, typed path declarations routed to their concrete types (defaults when absent), other paths dynamic |
 | QBit and newly introduced types | No (explicit rejection) | No | No | No | No | Explicit `UnsupportedClickHouseTypeException` planned rather than guessing |
 
 Rules that govern this table:

@@ -127,6 +127,34 @@ class TypeEdgeValuesTest {
   }
 
   @org.junit.jupiter.api.Test
+  void jsonTypedPathsRoundTripAsTheirConcreteTypes() {
+    Column column =
+        roundTripColumn(
+            "JSON(a Int64, b.c String)",
+            java.util.Map.of("a", 42L, "b.c", "typed", "extra", 2.5d),
+            java.util.Map.of("a", 7L),
+            null);
+    @SuppressWarnings("unchecked")
+    java.util.Map<String, Object> first = (java.util.Map<String, Object>) column.objectAt(0);
+    assertThat(first)
+        .containsEntry("a", 42L)
+        .containsEntry("b.c", "typed")
+        .containsEntry("extra", 2.5d);
+    @SuppressWarnings("unchecked")
+    java.util.Map<String, Object> second = (java.util.Map<String, Object>) column.objectAt(1);
+    // Absent typed paths take the type's default; absent dynamic paths are simply absent.
+    assertThat(second).containsEntry("a", 7L).containsEntry("b.c", "").doesNotContainKey("extra");
+    @SuppressWarnings("unchecked")
+    java.util.Map<String, Object> third = (java.util.Map<String, Object>) column.objectAt(2);
+    assertThat(third).containsEntry("a", 0L).containsEntry("b.c", "");
+
+    // Typed path values must fit their declared type losslessly.
+    assertThatThrownBy(
+            () -> roundTripColumn("JSON(a Int64)", java.util.Map.of("a", "not a number")))
+        .hasMessageContaining("Cannot convert");
+  }
+
+  @org.junit.jupiter.api.Test
   void timeAndTime64RoundTripTheirExtremes() {
     java.time.Duration max = java.time.Duration.ofSeconds(999L * 3600 + 59 * 60 + 59);
     Column time = roundTripColumn("Time", max, max.negated(), java.time.Duration.ZERO);

@@ -78,7 +78,6 @@ tests. What remains from the Phase 6 scope:
 
 | Feature | Notes |
 |---|---|
-| Writing JSON columns with typed path declarations | Untyped JSON, Variant and Dynamic writes shipped; declared typed paths need their own write handling |
 | Decoding shared variant and shared data values | Rows beyond a Dynamic column's type budget or a JSON column's path budget carry binary encoded type and value; CHord exposes the raw bytes and fails explicitly on typed access |
 | Replicated serialisation (54482) | An inter server column form; recognised and rejected explicitly |
 | Dynamic and JSON V3 and flattened serialisations | File format variants servers do not send over TCP; recognised and rejected explicitly |

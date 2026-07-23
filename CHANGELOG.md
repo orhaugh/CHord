@@ -36,10 +36,11 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 - Variant, Dynamic and JSON writes through native blocks. Variant values infer their
   alternative in name sorted order with NULL on the null discriminator; Dynamic values
   discover concrete types (Int64, String, Float64, Bool, DateTime64(9), UUID, Date32) with
-  the shared variant never written; untyped JSON columns take maps whose dotted or nested
-  keys become dynamic paths, with absent paths NULL and typed path declarations refused
-  until they gain their own write handling. Verified end to end: a real server parses the
-  inserted blocks and renders the nested JSON objects back.
+  the shared variant never written; JSON columns take maps whose dotted or nested keys
+  become paths. Paths declared in the column type, `JSON(a Int64)`, route to their concrete
+  columns with defaults when a row omits them; the rest become dynamic paths, with absent
+  paths NULL. Verified end to end: a real server parses the inserted blocks and renders
+  the nested JSON objects back.
 
 - Time and Time64 types, both directions: signed durations beyond a single day
   (+-999:59:59, sub second at the declared precision for Time64), surfacing as

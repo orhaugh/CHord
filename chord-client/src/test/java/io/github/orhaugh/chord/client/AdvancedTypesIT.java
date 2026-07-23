@@ -160,14 +160,19 @@ class AdvancedTypesIT {
       }
       execute(
           connection,
-          "CREATE TABLE adv_writes (id UInt8, v Variant(Int64, String), d Dynamic, j JSON)"
-              + " ENGINE = Memory");
+          "CREATE TABLE adv_writes (id UInt8, v Variant(Int64, String), d Dynamic, j JSON,"
+              + " tj JSON(a Int64, b.c String)) ENGINE = Memory");
       try (InsertStream insert =
           connection.insert(QueryRequest.of("INSERT INTO adv_writes VALUES"))) {
         io.github.orhaugh.chord.codec.column.BlockBuilder builder = insert.newBlock();
-        builder.addRow(1, 42L, "dynamic-string", java.util.Map.of("a", 1L, "b.c", "x"));
-        builder.addRow(2, "variant-string", 2.5d, java.util.Map.of("a", 2L));
-        builder.addRow(3, null, null, null);
+        builder.addRow(
+            1,
+            42L,
+            "dynamic-string",
+            java.util.Map.of("a", 1L, "b.c", "x"),
+            java.util.Map.of("a", 9L, "b.c", "typed", "extra", 3L));
+        builder.addRow(2, "variant-string", 2.5d, java.util.Map.of("a", 2L), java.util.Map.of());
+        builder.addRow(3, null, null, null, null);
         insert.send(builder.build());
         insert.finish();
       }
@@ -175,8 +180,8 @@ class AdvancedTypesIT {
       try (QueryResult result =
           connection.query(
               QueryRequest.of(
-                  "SELECT toString(v), toString(d), toString(j), v IS NULL, d IS NULL"
-                      + " FROM adv_writes ORDER BY id"))) {
+                  "SELECT toString(v), toString(d), toString(j), v IS NULL, d IS NULL,"
+                      + " tj.a, tj.b.c FROM adv_writes ORDER BY id"))) {
         Block block = result.nextBlock().orElseThrow();
         assertThat(block.column(0).objectAt(0)).isEqualTo("42");
         assertThat(block.column(1).objectAt(0)).isEqualTo("dynamic-string");
@@ -191,6 +196,11 @@ class AdvancedTypesIT {
         assertThat(block.column(4).objectAt(2)).isEqualTo(1);
         assertThat(block.column(3).objectAt(0)).isEqualTo(0);
         assertThat(block.column(2).objectAt(2)).isEqualTo("{}");
+        // Typed path subcolumns come back as their concrete types, defaults when absent.
+        assertThat(block.column(5).objectAt(0)).isEqualTo(9L);
+        assertThat(block.column(6).objectAt(0)).isEqualTo("typed");
+        assertThat(block.column(5).objectAt(1)).isEqualTo(0L);
+        assertThat(block.column(6).objectAt(1)).isEqualTo("");
         while (result.nextBlock().isPresent()) {
           // Drain.
         }

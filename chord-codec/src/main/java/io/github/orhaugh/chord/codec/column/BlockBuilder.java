@@ -466,12 +466,16 @@ public final class BlockBuilder {
     private final java.util.TreeMap<String, DynamicAppender> paths = new java.util.TreeMap<>();
     private int rows;
 
+    private final java.util.LinkedHashMap<String, Appender> typedAppenders =
+        new java.util.LinkedHashMap<>();
+
     JsonAppender(ClickHouseType.JsonType type) {
       this.type = type;
-      if (!JsonTypeArguments.typedPaths(type, 512, 32).isEmpty()) {
-        throw new UnsupportedClickHouseTypeException(
-            "Writing JSON columns with typed path declarations is not supported yet: "
-                + type.name());
+      // Typed paths are declared on the column type and always travel, in sorted path
+      // order, as columns of their concrete type; absent values take the type's default.
+      for (Map.Entry<String, ClickHouseType> typed :
+          JsonTypeArguments.typedPaths(type, 512, 32).entrySet()) {
+        typedAppenders.put(typed.getKey(), appenderFor(typed.getValue()));
       }
     }
 
@@ -483,6 +487,13 @@ public final class BlockBuilder {
           throw mismatch(value, type);
         }
         flatten("", map, flattened);
+      }
+      for (Map.Entry<String, Appender> typed : typedAppenders.entrySet()) {
+        if (flattened.containsKey(typed.getKey())) {
+          typed.getValue().append(flattened.remove(typed.getKey()));
+        } else {
+          typed.getValue().appendDefault();
+        }
       }
       for (Map.Entry<String, Object> entry : flattened.entrySet()) {
         DynamicAppender path =
@@ -540,9 +551,13 @@ public final class BlockBuilder {
       for (int i = 0; i < rows; i++) {
         sharedData.append(Map.of());
       }
+      java.util.LinkedHashMap<String, Column> typedColumns = new java.util.LinkedHashMap<>();
+      for (Map.Entry<String, Appender> typed : typedAppenders.entrySet()) {
+        typedColumns.put(typed.getKey(), typed.getValue().finish());
+      }
       Column built =
           new Columns.JsonColumn(
-              type, rows, Map.of(), dynamicPaths, (Columns.MapColumn) sharedData.finish());
+              type, rows, typedColumns, dynamicPaths, (Columns.MapColumn) sharedData.finish());
       rows = 0;
       paths.clear();
       return built;
