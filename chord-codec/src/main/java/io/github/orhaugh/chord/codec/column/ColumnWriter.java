@@ -217,6 +217,14 @@ public final class ColumnWriter {
         write(out, c.rawKeys());
         write(out, c.rawValues());
       }
+      case Columns.VariantColumn c -> {
+        for (int i = 0; i < c.size(); i++) {
+          out.writeUInt8(c.discriminatorAt(i));
+        }
+        for (Column variant : c.variants()) {
+          write(out, variant);
+        }
+      }
       case Columns.LowCardinalityColumn c -> writeLowCardinality(out, c);
       default ->
           throw new UnsupportedClickHouseTypeException(
@@ -249,6 +257,12 @@ public final class ColumnWriter {
                 .size();
         for (int e = 0; e < arity; e++) {
           writePrefix(out, c.element(e));
+        }
+      }
+      case Columns.VariantColumn c -> {
+        out.writeInt64Le(0); // basic discriminators mode
+        for (Column variant : c.variants()) {
+          writePrefix(out, variant);
         }
       }
       default -> {

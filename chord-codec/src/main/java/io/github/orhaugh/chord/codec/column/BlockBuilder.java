@@ -223,11 +223,7 @@ public final class BlockBuilder {
       case ClickHouseType.NothingType t ->
           throw new UnsupportedClickHouseTypeException("Cannot insert values of type Nothing");
       case ClickHouseType.LowCardinalityType t -> new LowCardinalityAppender(t);
-      case ClickHouseType.VariantType t ->
-          throw new UnsupportedClickHouseTypeException(
-              "Building Variant values client side is not supported; write the concrete column"
-                  + " type instead: "
-                  + t.name());
+      case ClickHouseType.VariantType t -> new VariantAppender(t);
       case ClickHouseType.DynamicType t ->
           throw new UnsupportedClickHouseTypeException(
               "Building Dynamic values client side is not supported; write a concrete column type"
@@ -255,6 +251,75 @@ public final class BlockBuilder {
       case 64 -> new Int64Appender(type);
       default -> new BigIntegerAppender(type);
     };
+  }
+
+  /**
+   * Builds Variant columns by inference: each value is offered to the alternatives in their
+   * declared (name sorted) order and the first that accepts it losslessly wins; NULL takes the null
+   * discriminator. Ambiguity therefore resolves deterministically by type name.
+   */
+  private static final class VariantAppender implements Appender {
+    private final ClickHouseType.VariantType type;
+    private final List<Appender> alternatives;
+    private final int[] counts;
+    private byte[] discriminators = new byte[16];
+    private int[] positions = new int[16];
+    private int size;
+
+    VariantAppender(ClickHouseType.VariantType type) {
+      this.type = type;
+      this.alternatives = new ArrayList<>(type.alternatives().size());
+      for (ClickHouseType alternative : type.alternatives()) {
+        alternatives.add(appenderFor(alternative));
+      }
+      this.counts = new int[alternatives.size()];
+    }
+
+    @Override
+    public void append(Object value) {
+      if (size == discriminators.length) {
+        discriminators = Arrays.copyOf(discriminators, size * 2);
+        positions = Arrays.copyOf(positions, size * 2);
+      }
+      if (value == null) {
+        discriminators[size] = (byte) Columns.VariantColumn.NULL_DISCRIMINATOR;
+        positions[size] = 0;
+        size++;
+        return;
+      }
+      for (int i = 0; i < alternatives.size(); i++) {
+        try {
+          alternatives.get(i).append(value);
+          discriminators[size] = (byte) i;
+          positions[size] = counts[i]++;
+          size++;
+          return;
+        } catch (ChordTypeException e) {
+          // The next alternative may accept it; appenders validate before storing.
+        }
+      }
+      throw new ChordTypeException(
+          "No variant of " + type.name() + " accepts a " + value.getClass().getSimpleName());
+    }
+
+    @Override
+    public void appendDefault() {
+      append(null);
+    }
+
+    @Override
+    public Column finish() {
+      List<Column> variants = new ArrayList<>(alternatives.size());
+      for (Appender alternative : alternatives) {
+        variants.add(alternative.finish());
+      }
+      Column built =
+          new Columns.VariantColumn(
+              type, Arrays.copyOf(discriminators, size), variants, Arrays.copyOf(positions, size));
+      size = 0;
+      Arrays.fill(counts, 0);
+      return built;
+    }
   }
 
   private abstract static class PrimitiveAppender implements Appender {

@@ -48,6 +48,30 @@ class TypeEdgeValuesTest {
   private static final long REVISION = 54488;
 
   @org.junit.jupiter.api.Test
+  void variantValuesRoundTripByInference() {
+    // Alternatives are name sorted (Int64 before String); inference offers values in that
+    // order and NULL takes the null discriminator.
+    Column column = roundTripColumn("Variant(Int64, String)", 42L, "hello", null, -7L, "", 0L);
+    assertThat(column.objectAt(0)).isEqualTo(42L);
+    assertThat(column.objectAt(1)).isEqualTo("hello");
+    assertThat(column.objectAt(2)).isNull();
+    assertThat(column.objectAt(3)).isEqualTo(-7L);
+    assertThat(column.objectAt(4)).isEqualTo("");
+    assertThat(column.objectAt(5)).isEqualTo(0L);
+
+    // A value no alternative accepts is refused with the variant type named.
+    assertThatThrownBy(() -> roundTripColumn("Variant(Int64, String)", java.time.Instant.EPOCH))
+        .hasMessageContaining("No variant of Variant(Int64, String)");
+
+    // Nested shapes survive: arrays inside a variant.
+    Column nested =
+        roundTripColumn("Variant(Array(Int64), String)", java.util.List.of(1L, 2L), "x", null);
+    assertThat(nested.objectAt(0)).isEqualTo(java.util.List.of(1L, 2L));
+    assertThat(nested.objectAt(1)).isEqualTo("x");
+    assertThat(nested.objectAt(2)).isNull();
+  }
+
+  @org.junit.jupiter.api.Test
   void timeAndTime64RoundTripTheirExtremes() {
     java.time.Duration max = java.time.Duration.ofSeconds(999L * 3600 + 59 * 60 + 59);
     Column time = roundTripColumn("Time", max, max.negated(), java.time.Duration.ZERO);
