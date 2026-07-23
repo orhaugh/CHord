@@ -1,0 +1,31 @@
+name: Drop Central deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_id:
+        description: Deployment ID to drop (must be VALIDATED or FAILED)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  drop:
+    name: Drop staged deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Drop
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+        run: |
+          token=$(printf '%s:%s' "$CENTRAL_USERNAME" "$CENTRAL_PASSWORD" | base64 -w0)
+          code=$(curl -s -o /tmp/drop-body -w '%{http_code}' -X DELETE \
+            -H "Authorization: Bearer $token" \
+            "https://central.sonatype.com/api/v1/publisher/deployment/$DEPLOYMENT_ID")
+          echo "HTTP $code"
+          cat /tmp/drop-body || true
+          test "$code" = "204"

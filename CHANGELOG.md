@@ -6,45 +6,25 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ## [Unreleased]
 
-### Fixed
-
-- Sparse IPv4 and IPv6 columns failed to materialise: the default value registry produced a
-  string and a raw byte array where the column builders require address values, so any
-  genuinely sparse IP column from a MergeTree table raised a type error instead of decoding.
-  Found by the coverage audit's sparse type family matrix (docs/test-coverage-audit.md).
-
-### Added
-
-- Coverage for every P0 gap in the test coverage audit: float special values (NaN, infinities,
-  negative zero) through codec, server and JDBC paths; DateTime64 at precisions 0, 6 and 9
-  with range extremes; abrupt connection loss mid SELECT stream and mid INSERT stream with
-  retry classification and connection state asserted; cross thread cancellation; sparse
-  materialisation across 22 type families plus a server verified mixed type sparse table;
-  LowCardinality four byte dictionary indexes in both directions and Date, FixedString and
-  UInt16 dictionary keys; query timeouts over TLS; every BlockLimits cap enforced through
-  hostile block decode; and boundary values for every integer, date, decimal and enum width,
-  written natively and read back against real servers.
-
-- Coverage for every P1 gap in the test coverage audit. Codec: all eleven Interval kinds,
-  every Decimal width at its extremes, hand built wire vectors for the LowCardinality,
-  Variant, Dynamic and JSON guard branches including compact discriminators and V2 prefixes,
-  ProfileInfo and Progress truncation, compression level bounds. Client: connect timeouts,
-  pool idle eviction and close races, RANDOM failover and backoff caps, retry classification
-  stamps at every protocol phase, hostile chunk headers, TLS protocol and cipher pinning,
-  empty inserts, query id round trips to system.query_log, insert path listeners, and a
-  differential check of decoded values against clickhouse-client output. JDBC: the full
-  ResultSet getter and coercion matrix, PreparedStatement setters and batch semantics,
-  statement lifecycle including cross thread cancel, DatabaseMetaData and ResultSetMetaData
-  surfaces, the complete SQLState mapping matrix, and driver URL, multi host failover and
-  DataSource paths. Observability: JFR event outcomes from real recordings and Micrometer
-  gauges tracked through live pool traffic.
-
-## [0.1.0] - 2026-07-22
+## [0.1.0] - 2026-07-23
 
 First public release: the native TCP protocol client and its JDBC adapter, tested against
 ClickHouse 25.8, 26.3 and 26.6.
 
 ### Added
+
+- Coverage for every P0 and P1 gap in the test coverage audit
+  (docs/test-coverage-audit.md), taking the suite to 416 executions swept across three
+  server versions. Burning down the P0s surfaced and fixed a real defect before release:
+  sparse IPv4 and IPv6 columns could not materialise because the default value registry
+  produced a string and a raw byte array where the column builders require address values.
+  Highlights: float special values and every integer, date, decimal and enum width at its
+  boundaries through codec, server and JDBC paths; abrupt connection loss at every protocol
+  phase with retry classification asserted; sparse materialisation across 22 type families;
+  hand built wire vectors for the LowCardinality, Variant, Dynamic and JSON guard branches;
+  TLS pinning; the full JDBC getter, setter, batch, metadata and SQLState matrices; JFR
+  event outcomes from real recordings; Micrometer gauges under live pool traffic; and a
+  differential check of decoded values against clickhouse-client output.
 
 - Release readiness: `chord-bom` now lists every published module, including `chord-codec`,
   `chord-jdbc` and `chord-observability`, which shed their placeholder status in earlier
