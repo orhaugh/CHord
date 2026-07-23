@@ -73,6 +73,11 @@ public class HttpComparisonBenchmark {
       "SELECT number, toString(number) AS s, number / 2.0 AS d FROM numbers(1000000)";
   private static final int INSERT_ROWS = 100_000;
 
+  /** The only namespace this benchmark ever writes to, dropped again at teardown. */
+  private static final String SCRATCH_DB = "chord_bench_scratch";
+
+  private static final String SINK = SCRATCH_DB + ".bench_sink";
+
   private ClickHouseServerContainer server;
   private NativeConnection chord;
   private Client http;
@@ -112,10 +117,25 @@ public class HttpComparisonBenchmark {
           java.nio.file.Files.newBufferedReader(java.nio.file.Path.of(configPath))) {
         config.load(reader);
       }
-      host = require(config, "host");
+      // Tolerate the console's URL form: https://host:8443/possible/path
+      String rawHost = require(config, "host");
+      String stripped = rawHost.replaceFirst("^https?://", "");
+      int slash = stripped.indexOf('/');
+      if (slash >= 0) {
+        stripped = stripped.substring(0, slash);
+      }
+      String embeddedPort = null;
+      int colon = stripped.indexOf(':');
+      if (colon >= 0) {
+        embeddedPort = stripped.substring(colon + 1);
+        stripped = stripped.substring(0, colon);
+      }
+      host = stripped;
       nativePort = Integer.parseInt(config.getProperty("nativePort", "9440"));
-      httpPort = Integer.parseInt(config.getProperty("httpPort", "8443"));
-      user = config.getProperty("user", "default");
+      httpPort =
+          Integer.parseInt(
+              config.getProperty("httpPort", embeddedPort != null ? embeddedPort : "8443"));
+      user = config.getProperty("user", config.getProperty("username", "default"));
       password = require(config, "password");
       database = config.getProperty("database", "default");
       tls = Boolean.parseBoolean(config.getProperty("tls", "true"));
@@ -145,13 +165,40 @@ public class HttpComparisonBenchmark {
             .compressServerResponse(true)
             .compressClientRequest(true)
             .build();
+    // Full isolation: everything writable lives in a dedicated scratch database with
+    // qualified names, so shared instances with real data are never touched. Abort rather
+    // than proceed if the scratch database holds anything that is not ours.
+    execute("CREATE DATABASE IF NOT EXISTS " + SCRATCH_DB);
+    requireScratchDatabaseIsOurs();
+    execute(
+        "CREATE TABLE IF NOT EXISTS " + SINK + " (n UInt64, s String, d Float64) ENGINE = Null");
+  }
+
+  private void execute(String sql) {
+    try (QueryResult result = chord.query(QueryRequest.of(sql))) {
+      while (result.nextBlock().isPresent()) {
+        // Drain.
+      }
+    }
+  }
+
+  private void requireScratchDatabaseIsOurs() {
     try (QueryResult result =
         chord.query(
             QueryRequest.of(
-                "CREATE TABLE IF NOT EXISTS bench_sink (n UInt64, s String, d Float64)"
-                    + " ENGINE = Null"))) {
+                "SELECT count() FROM system.tables WHERE database = '"
+                    + SCRATCH_DB
+                    + "' AND name != 'bench_sink'"))) {
+      Block block = result.nextBlock().orElseThrow();
+      long strangers = ((Columns.UInt64Column) block.column(0)).rawLongAt(0);
       while (result.nextBlock().isPresent()) {
         // Drain.
+      }
+      if (strangers != 0) {
+        throw new IllegalStateException(
+            "Database "
+                + SCRATCH_DB
+                + " contains tables this benchmark did not create; refusing to touch it");
       }
     }
   }
@@ -165,11 +212,16 @@ public class HttpComparisonBenchmark {
     return value;
   }
 
-  /** Stops both clients and the server. */
+  /** Drops the scratch database after re-verifying it is ours, then stops everything. */
   @TearDown(Level.Trial)
   public void stop() {
     if (chord != null) {
-      chord.close();
+      try {
+        requireScratchDatabaseIsOurs();
+        execute("DROP DATABASE IF EXISTS " + SCRATCH_DB);
+      } finally {
+        chord.close();
+      }
     }
     if (http != null) {
       http.close();
@@ -223,7 +275,7 @@ public class HttpComparisonBenchmark {
   /** Inserts one hundred thousand rows as native blocks, encoding included. */
   @Benchmark
   public void chordInsertHundredThousandRows() {
-    try (InsertStream insert = chord.insert(QueryRequest.of("INSERT INTO bench_sink VALUES"))) {
+    try (InsertStream insert = chord.insert(QueryRequest.of("INSERT INTO " + SINK + " VALUES"))) {
       BlockBuilder builder = insert.newBlock();
       for (long n = 0; n < INSERT_ROWS; n++) {
         builder.addRow(BigInteger.valueOf(n), "value-" + n, n / 2.0);
@@ -250,9 +302,7 @@ public class HttpComparisonBenchmark {
     }
     try (InsertResponse response =
         http.insert(
-                "bench_sink",
-                new ByteArrayInputStream(payload.toByteArray()),
-                ClickHouseFormat.RowBinary)
+                SINK, new ByteArrayInputStream(payload.toByteArray()), ClickHouseFormat.RowBinary)
             .get()) {
       // The response body carries nothing further.
       Blackhole.consumeCPU(0);
