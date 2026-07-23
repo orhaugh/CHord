@@ -33,6 +33,15 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
   ClientInfo, so server side spans in `system.opentelemetry_span_log` join the caller's
   trace. No OpenTelemetry dependency is required.
 
+- External tables: `QueryRequest.Builder.externalTable(name, block)` sends named data blocks
+  ahead of query execution, visible to that query as temporary tables, the native protocol's
+  mechanism for joining client side data without an INSERT.
+
+- Record mapping: `Records.stream(result, MyRecord.class)` maps rows onto Java records by
+  component name with lossless conversions, and `Records.insertAll(insert, records,
+  rowsPerBlock)` sends iterables of records against the server supplied schema. The columnar
+  accessors remain the primary allocation free API (ADR-0005).
+
 - Interruption semantics pinned by test: interrupting a virtual thread blocked mid query
   surfaces a typed ChordException promptly and marks the connection BROKEN.
 
