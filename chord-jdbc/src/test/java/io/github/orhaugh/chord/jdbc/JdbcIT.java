@@ -549,7 +549,8 @@ class JdbcIT {
     try (Connection connection = connect()) {
       DatabaseMetaData metadata = connection.getMetaData();
       assertThat(metadata.getDatabaseProductVersion()).isNotBlank();
-      assertThat(metadata.getDatabaseMajorVersion()).isGreaterThanOrEqualTo(25);
+      // 24.8 is the supported floor; the exact number tracks whichever image the sweep runs.
+      assertThat(metadata.getDatabaseMajorVersion()).isGreaterThanOrEqualTo(24);
       assertThat(metadata.getDriverName()).isEqualTo("CHord JDBC");
       assertThat(metadata.getJDBCMajorVersion()).isEqualTo(4);
       assertThat(metadata.getIdentifierQuoteString()).isEqualTo("`");
