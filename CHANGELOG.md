@@ -8,6 +8,38 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ### Added
 
+- JDBC private authority TLS: `ssl_ca` carries a PEM bundle and `ssl_truststore` with
+  `ssl_truststore_password` a JKS or PKCS#12 store, mutually exclusive, refused without
+  `ssl=true`; with neither, system trust applies as before.
+
+- Pool warm up and keep alive: `ConnectionPool.Builder.minIdle(int)` opens connections in
+  the background until the floor is met, refills after evictions, and pings idle
+  connections on the validation cadence so load balancer and NAT idle timers never kill a
+  pooled connection silently. The idle timeout shrinks the pool only above the floor.
+
+- Operation metrics: `ChordOperationListener` receives a callback per concluded connect,
+  query and insert at the JFR commit points; `ChordClientMetrics.bind` bridges it to
+  Micrometer timers tagged by outcome, and `ChordPoolMetrics` now also registers lifetime
+  counters (acquires, timeouts, opened, discarded, leaks) and an acquire wait timer from
+  the new public `ConnectionPool.stats()` snapshot.
+
+- Credential rotation: `ConnectionOptions.Builder.credentials(Supplier)` resolves a
+  `ChordCredentials` pair per new connection, so pools pick up rotated passwords
+  without a rebuild; the plaintext password protection applies to resolved credentials
+  exactly as to static ones.
+
+- OpenTelemetry trace propagation: `QueryRequest.Builder.traceContext(traceParent,
+  traceState)` parses the W3C header values and carries them inside the Query packet's
+  ClientInfo, so server side spans in `system.opentelemetry_span_log` join the caller's
+  trace. No OpenTelemetry dependency is required.
+
+- Interruption semantics pinned by test: interrupting a virtual thread blocked mid query
+  surfaces a typed ChordException promptly and marks the connection BROKEN.
+
+- The integration suite now also passes against ClickHouse 24.8 (LTS): two tests learned
+  the version dependent behaviours (pre chunked handshakes and lazy default database
+  validation).
+
 - A comparative benchmark against the official Java HTTP client
   (`HttpComparisonBenchmark`): both stacks against the same containerised server with LZ4
   in both directions, across a million row streaming SELECT, a hundred thousand row insert

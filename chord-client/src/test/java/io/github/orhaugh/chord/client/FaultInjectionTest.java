@@ -230,6 +230,66 @@ class FaultInjectionTest {
   }
 
   @Test
+  void interruptingAVirtualThreadBlockedMidQueryFailsTypedAndPromptly() throws Exception {
+    try (ServerSocket server = new ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
+      java.util.concurrent.CountDownLatch consuming = new java.util.concurrent.CountDownLatch(1);
+      java.util.concurrent.atomic.AtomicReference<Throwable> failure =
+          new java.util.concurrent.atomic.AtomicReference<>();
+      java.util.concurrent.atomic.AtomicReference<ConnectionState> finalState =
+          new java.util.concurrent.atomic.AtomicReference<>();
+      Thread serverThread =
+          Thread.ofVirtual()
+              .start(
+                  () -> {
+                    try (Socket socket = server.accept()) {
+                      OutputStream out = socket.getOutputStream();
+                      out.write(helloBytes());
+                      out.flush();
+                      drainInbound(socket.getInputStream(), 250);
+                      out.write(dataPacket()); // schema header only, then silence
+                      out.flush();
+                      // Hold the socket open without data: the consumer blocks reading.
+                      Thread.sleep(30_000);
+                    } catch (Exception e) {
+                      // Torn down by the test.
+                    }
+                  });
+
+      Thread consumer =
+          Thread.ofVirtual()
+              .start(
+                  () -> {
+                    try (NativeConnection connection =
+                        NativeConnection.open(options(server.getLocalPort()))) {
+                      try (QueryResult result =
+                          connection.query(QueryRequest.of("SELECT n FROM t"))) {
+                        consuming.countDown();
+                        while (result.nextBlock().isPresent()) {
+                          // Blocks on the silent socket until interrupted.
+                        }
+                      } catch (Throwable t) {
+                        failure.set(t);
+                      }
+                      finalState.set(connection.state());
+                    }
+                  });
+
+      assertThat(consuming.await(10, TimeUnit.SECONDS)).isTrue();
+      Thread.sleep(100); // let the consumer actually park in the socket read
+      consumer.interrupt();
+      consumer.join(java.time.Duration.ofSeconds(10));
+
+      // The contract users depend on in structured concurrency: interruption surfaces a
+      // typed failure promptly, never a hang, and the connection is honestly unusable.
+      assertThat(consumer.isAlive()).as("interrupted consumer must exit promptly").isFalse();
+      assertThat(failure.get()).isInstanceOf(ChordException.class);
+      assertThat(finalState.get()).isEqualTo(ConnectionState.BROKEN);
+      serverThread.interrupt();
+      serverThread.join(java.time.Duration.ofSeconds(5));
+    }
+  }
+
+  @Test
   void connectionLostBeforeInsertFinishHasUnknownOutcome() throws Exception {
     try (ServerSocket server = new ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
       Thread serverThread =

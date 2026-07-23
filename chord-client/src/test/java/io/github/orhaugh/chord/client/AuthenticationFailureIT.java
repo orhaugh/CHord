@@ -57,10 +57,20 @@ class AuthenticationFailureIT {
 
   @Test
   void unknownDatabaseRaisesServerException() {
+    // Newer servers refuse the handshake; 24.x validates the default database lazily at the
+    // first query. Either way the failure is typed UNKNOWN_DATABASE and never silent.
     ConnectionOptions unknownDatabase =
         options().password(CLICKHOUSE.password()).database("no_such_database_here").build();
 
-    assertThatThrownBy(() -> NativeConnection.open(unknownDatabase))
+    assertThatThrownBy(
+            () -> {
+              try (NativeConnection connection = NativeConnection.open(unknownDatabase);
+                  QueryResult result = connection.query(QueryRequest.of("SHOW TABLES"))) {
+                while (result.nextBlock().isPresent()) {
+                  // Drain; older servers fail here rather than at the handshake.
+                }
+              }
+            })
         .isInstanceOf(ChordServerException.class)
         .satisfies(
             e ->

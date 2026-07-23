@@ -8,11 +8,13 @@ internal abstraction, no wrapping of `clickhouse-client`.
 [![ClickHouse compatibility](https://github.com/orhaugh/CHord/actions/workflows/compatibility.yml/badge.svg)](https://github.com/orhaugh/CHord/actions/workflows/compatibility.yml)
 [![License](https://img.shields.io/badge/licence-Apache%202.0-blue.svg)](LICENSE)
 
-## Status: early development
+## Status
 
-CHord is pre 0.1 and **not yet published to Maven Central**. The entire public API is
-experimental and will change. What exists today is the foundation and the first slice of the
-protocol, implemented against the current ClickHouse sources and tested against real servers:
+**0.1.0 is the first public release.** Before 1.0.0 any 0.x release may change the API; the
+changelog calls out every break. What ships today is implemented against the current ClickHouse
+sources and tested against real servers, 460+ automated tests swept across three server
+versions on every commit, with mutation fuzzing over the decoders, fault injection at every
+protocol phase, and a duration scaled soak suite:
 
 | Capability | Status |
 |---|---|
@@ -76,14 +78,6 @@ The first Maven Central release (0.1.0) ships under these coordinates, aligned b
   <groupId>io.github.orhaugh</groupId>
   <artifactId>chord-client</artifactId> <!-- or chord-jdbc for the JDBC driver -->
 </dependency>
-```
-
-Until that release lands in the portal, build and install locally:
-
-```bash
-git clone https://github.com/orhaugh/CHord.git
-cd CHord
-./mvnw install
 ```
 
 Then, with `chord-client` on the classpath:
@@ -184,6 +178,48 @@ ConnectionOptions options = ConnectionOptions.builder()
 A runnable version of this is in
 [chord-examples](chord-examples/src/main/java/io/github/orhaugh/chord/examples/PingExample.java).
 
+### JDBC
+
+`chord-jdbc` registers through the service loader; tools and frameworks need only the URL:
+
+```java
+String url = "jdbc:chord://ch1.example.com:9440,ch2.example.com:9440/analytics?ssl=true";
+try (Connection connection = DriverManager.getConnection(url, "app", password);
+    PreparedStatement insert =
+        connection.prepareStatement("INSERT INTO events (id, name) VALUES (?, ?)")) {
+  insert.setLong(1, 42);
+  insert.setString(2, "started");
+  insert.addBatch();          // batches travel as native blocks, not SQL strings
+  insert.executeBatch();
+}
+```
+
+Multiple hosts fail over in order. Prepared statement batches for `INSERT ... VALUES (?, ...)`
+are sent as native columnar blocks with server side schema validation, not as concatenated SQL.
+The adapter is honest about ClickHouse: no transactions, no scrollable cursors, and
+SQLFeatureNotSupportedException instead of silent degradation; retry classification surfaces
+through the standard transient versus non transient exception hierarchy.
+
+## Performance
+
+Preliminary comparisons against the official Java HTTP client, measured stack against stack on
+the same server: **streaming reads decode at roughly 2.5x to 3x the HTTP client's throughput**
+on a local server, and against ClickHouse Cloud over the public internet the persistent native
+connection answers point queries roughly 24% faster per request. Batch insert throughput is
+comparable. Full numbers, environments, error bars and the methodology rules are in
+[docs/performance.md](docs/performance.md); nothing graduates to a marketing claim without a
+rigorous environment behind it.
+
+## Why a blocking API?
+
+CHord's API is blocking and streaming by design, built for Java 21 virtual threads: run ten
+thousand concurrent queries by running ten thousand virtual threads, each with straightforward
+sequential code and bounded memory. A `CompletableFuture` or reactive facade would add
+scheduling layers the protocol does not need and obscure the backpressure the streaming API
+gives you for free. If your stack is reactive, wrap the blocking calls in your framework's
+virtual thread adapter; a first party reactive adapter is on the roadmap only if real demand
+appears.
+
 ## Modules
 
 | Module | Purpose |
@@ -196,7 +232,7 @@ A runnable version of this is in
 | `chord-jdbc` | The JDBC 4.3 adapter over the native client: `jdbc:chord://` URLs, prepared statements that batch through native blocks, and metadata over the system tables. |
 | `chord-testkit` | Testcontainers fixture for ClickHouse with native port access. |
 | `chord-examples` | Runnable examples. Not published. |
-| `chord-benchmarks` | JMH benchmarks, built with `-Pbenchmarks`. Not published. |
+| `chord-benchmarks` | JMH benchmarks including the comparison against the official HTTP client. Not published. |
 | `chord-bom` | Bill of materials aligning module versions. |
 
 ## Building and testing
@@ -206,7 +242,7 @@ A runnable version of this is in
 ./mvnw -Pcoverage verify            # adds JaCoCo reports
 ./mvnw -Pintegration-tests verify   # adds Testcontainers integration tests (needs Docker)
 ./mvnw -Pcompatibility-tests verify -Dchord.testkit.clickhouse.image=clickhouse/clickhouse-server:26.6
-./mvnw -Pbenchmarks package         # builds the JMH jar
+./mvnw -Pbench-smoke verify -pl chord-benchmarks -am -DskipTests   # exercises the JMH harness
 ```
 
 Formatting is enforced by google-java-format through Spotless; run `./mvnw spotless:apply` before

@@ -57,6 +57,10 @@ class ChunkedProtocolIT {
   @Test
   void handshakesAndPingsOverChunkedFraming() {
     try (NativeConnection connection = connect(null)) {
+      org.junit.jupiter.api.Assumptions.assumeTrue(
+          io.github.orhaugh.chord.protocol.ProtocolFeature.CHUNKED_PACKETS.enabledFor(
+              connection.negotiatedRevision()),
+          "server predates chunked framing");
       assertThat(connection.serverHello().chunkedSendCapability()).contains("chunked");
       for (int i = 0; i < 3; i++) {
         connection.ping();
