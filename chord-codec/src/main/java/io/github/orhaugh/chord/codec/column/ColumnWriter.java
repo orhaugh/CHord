@@ -122,6 +122,16 @@ public final class ColumnWriter {
           out.writeInt32Le((int) c.localDateAt(i).toEpochDay());
         }
       }
+      case Columns.TimeColumn c -> {
+        for (int i = 0; i < c.size(); i++) {
+          out.writeInt32Le(c.rawSecondsAt(i));
+        }
+      }
+      case Columns.Time64Column c -> {
+        for (int i = 0; i < c.size(); i++) {
+          out.writeInt64Le(c.rawTicksAt(i));
+        }
+      }
       case Columns.DateTimeColumn c -> {
         for (int i = 0; i < c.size(); i++) {
           out.writeInt32Le(c.rawSecondsAt(i));

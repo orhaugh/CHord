@@ -75,6 +75,8 @@ final class JdbcTypes {
       case ClickHouseType.EnumType t -> Types.VARCHAR;
       case ClickHouseType.DateType t -> Types.DATE;
       case ClickHouseType.Date32Type t -> Types.DATE;
+      case ClickHouseType.TimeType t -> Types.TIME;
+      case ClickHouseType.Time64Type t -> Types.TIME;
       case ClickHouseType.DateTimeType t -> Types.TIMESTAMP;
       case ClickHouseType.DateTime64Type t -> Types.TIMESTAMP;
       case ClickHouseType.ArrayType t -> Types.ARRAY;
@@ -117,6 +119,8 @@ final class JdbcTypes {
       case ClickHouseType.EnumType t -> String.class.getName();
       case ClickHouseType.DateType t -> java.time.LocalDate.class.getName();
       case ClickHouseType.Date32Type t -> java.time.LocalDate.class.getName();
+      case ClickHouseType.TimeType t -> java.time.Duration.class.getName();
+      case ClickHouseType.Time64Type t -> java.time.Duration.class.getName();
       case ClickHouseType.DateTimeType t -> java.time.Instant.class.getName();
       case ClickHouseType.DateTime64Type t -> java.time.Instant.class.getName();
       case ClickHouseType.UuidType t -> UUID.class.getName();

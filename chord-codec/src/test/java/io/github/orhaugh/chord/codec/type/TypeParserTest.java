@@ -173,11 +173,19 @@ class TypeParserTest {
 
   @Test
   void rejectsRecognisedButUnsupportedTypes() {
-    for (String name : new String[] {"Time", "Time64", "QBit", "Object"}) {
+    for (String name : new String[] {"QBit", "Object"}) {
       assertThatThrownBy(() -> parsed(name))
           .isInstanceOf(UnsupportedClickHouseTypeException.class)
           .hasMessageContaining("not supported");
     }
+  }
+
+  @Test
+  void parsesTimeTypes() {
+    assertThat(parsed("Time").name()).isEqualTo("Time");
+    assertThat(parsed("Time64(3)").name()).isEqualTo("Time64(3)");
+    assertThat(parsed("Time64(9)").name()).isEqualTo("Time64(9)");
+    assertThatThrownBy(() -> parsed("Time64(10)")).hasMessageContaining("precision");
   }
 
   @Test

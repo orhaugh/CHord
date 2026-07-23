@@ -21,7 +21,7 @@ blocks), JDBC (mapping in the JDBC adapter), Object (row object mapping).
 | FixedString(N) | Yes | Yes | Yes | Yes | Unscheduled | |
 | Date, Date32 | Yes | Yes | Yes | Yes | Unscheduled | `LocalDate` |
 | DateTime, DateTime64 | Yes | Yes | Yes | Yes | Unscheduled | `Instant`; timezone metadata retained separately |
-| Time, Time64 | No (explicit rejection) | No | No | No | No | Recently introduced upstream; unscheduled until demand exists |
+| Time, Time64 | Yes | Yes | Yes | Yes | Unscheduled | `Duration`; signed, beyond a single day (+-999:59:59), sub tick precision refused |
 | Interval* | Yes | Yes | Yes | No | Unscheduled | SELECT only upstream |
 | UUID | Yes | Yes | Yes | Yes | Unscheduled | `java.util.UUID` |
 | IPv4, IPv6 | Yes | Yes | Yes | Yes | Unscheduled | Dedicated value types |

@@ -47,6 +47,39 @@ class TypeEdgeValuesTest {
 
   private static final long REVISION = 54488;
 
+  @org.junit.jupiter.api.Test
+  void timeAndTime64RoundTripTheirExtremes() {
+    java.time.Duration max = java.time.Duration.ofSeconds(999L * 3600 + 59 * 60 + 59);
+    Column time = roundTripColumn("Time", max, max.negated(), java.time.Duration.ZERO);
+    assertThat(time.objectAt(0)).isEqualTo(max);
+    assertThat(time.objectAt(1)).isEqualTo(max.negated());
+    assertThat(time.objectAt(2)).isEqualTo(java.time.Duration.ZERO);
+
+    java.time.Duration subSecond = max.plusMillis(0).minusSeconds(0).plusNanos(999_000_000);
+    Column time64 =
+        roundTripColumn(
+            "Time64(3)",
+            max.plusMillis(999),
+            max.negated().minusMillis(999),
+            java.time.Duration.ofNanos(1_000_000));
+    assertThat(time64.objectAt(0)).isEqualTo(max.plusMillis(999));
+    assertThat(time64.objectAt(1)).isEqualTo(max.negated().minusMillis(999));
+    assertThat(time64.objectAt(2)).isEqualTo(java.time.Duration.ofNanos(1_000_000));
+
+    Column nanos = roundTripColumn("Time64(9)", java.time.Duration.ofNanos(123456789));
+    assertThat(nanos.objectAt(0)).isEqualTo(java.time.Duration.ofNanos(123456789));
+
+    // Sub tick and out of range values are refused, never silently truncated.
+    assertThatThrownBy(() -> roundTripColumn("Time", java.time.Duration.ofNanos(1)))
+        .hasMessageContaining("more precision");
+    assertThatThrownBy(() -> roundTripColumn("Time64(3)", java.time.Duration.ofNanos(1)))
+        .hasMessageContaining("more precision");
+    assertThatThrownBy(() -> roundTripColumn("Time", max.plusSeconds(1)))
+        .hasMessageContaining("outside the Time range");
+    assertThatThrownBy(() -> roundTripColumn("Time64(3)", subSecond.plusSeconds(10)))
+        .hasMessageContaining("outside the Time64(3) range");
+  }
+
   private static Column roundTripColumn(String typeName, Object... values) {
     BlockBuilder builder =
         BlockBuilder.forColumnTypes(List.of(TypeParser.parse(typeName, 10_000, 32)));

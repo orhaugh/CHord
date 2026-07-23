@@ -405,7 +405,8 @@ final class ChordResultSet implements ResultSet {
 
   @Override
   public Time getTime(int columnIndex) throws SQLException {
-    throw SqlExceptions.unsupported("TIME values (ClickHouse Time types are not decoded yet)");
+    throw SqlExceptions.unsupported(
+        "getTime (ClickHouse Time values range past a day; use getObject(column, Duration.class))");
   }
 
   @Override
@@ -441,6 +442,7 @@ final class ChordResultSet implements ResultSet {
       converted = getTimestamp(columnIndex);
     } else if (type == LocalDate.class
         || type == Instant.class
+        || type == java.time.Duration.class
         || type == UUID.class
         || type == BigInteger.class
         || type == InetAddress.class

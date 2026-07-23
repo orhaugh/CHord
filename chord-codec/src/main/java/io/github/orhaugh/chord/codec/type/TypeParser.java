@@ -165,7 +165,9 @@ public final class TypeParser {
         case "Ring", "LineString" -> new ArrayType(point());
         case "Polygon", "MultiLineString" -> new ArrayType(new ArrayType(point()));
         case "MultiPolygon" -> new ArrayType(new ArrayType(new ArrayType(point())));
-        case "Time", "Time64", "QBit", "Object" ->
+        case "Time" -> new ClickHouseType.TimeType();
+        case "Time64" -> parseTime64();
+        case "QBit", "Object" ->
             throw new UnsupportedClickHouseTypeException(
                 "Type " + identifier + " is recognised but not supported by CHord yet");
         default -> parseIntervalOrFail(identifier);
@@ -232,6 +234,17 @@ public final class TypeParser {
       throw error("DateTime64 precision out of range: " + precision);
     }
     return new DateTime64Type((int) precision, timezone);
+  }
+
+  private ClickHouseType parseTime64() {
+    expect('(');
+    long precision = readInteger();
+    skipWhitespace();
+    expect(')');
+    if (precision < 0 || precision > 9) {
+      throw error("Time64 precision out of range: " + precision);
+    }
+    return new ClickHouseType.Time64Type((int) precision);
   }
 
   private ClickHouseType parseDecimal() {

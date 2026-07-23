@@ -155,6 +155,33 @@ public sealed interface ClickHouseType {
     }
   }
 
+  /**
+   * Time of day beyond calendar semantics: signed seconds stored as Int32, ranging past a single
+   * day in both directions ({@code -999:59:59} to {@code 999:59:59}). Surfaces as {@link
+   * java.time.Duration}.
+   */
+  record TimeType() implements ClickHouseType {
+    @Override
+    public String name() {
+      return "Time";
+    }
+  }
+
+  /** Sub second {@link TimeType}: signed ticks at a fixed decimal precision, stored as Int64. */
+  record Time64Type(int precision) implements ClickHouseType {
+    /** Validates components. */
+    public Time64Type {
+      if (precision < 0 || precision > 9) {
+        throw new IllegalArgumentException("Time64 precision must be 0..9");
+      }
+    }
+
+    @Override
+    public String name() {
+      return "Time64(" + precision + ")";
+    }
+  }
+
   /** Interval of a fixed kind, stored as Int64. */
   record IntervalType(IntervalKind kind) implements ClickHouseType {
     /** Validates components. */

@@ -206,6 +206,8 @@ public final class BlockBuilder {
       case ClickHouseType.Date32Type t -> new Date32Appender(t);
       case ClickHouseType.DateTimeType t -> new DateTimeAppender(t);
       case ClickHouseType.DateTime64Type t -> new DateTime64Appender(t);
+      case ClickHouseType.TimeType t -> new TimeAppender(t);
+      case ClickHouseType.Time64Type t -> new Time64Appender(t);
       case ClickHouseType.UuidType t -> new UuidAppender(t);
       case ClickHouseType.Ipv4Type t -> new Ipv4Appender(t);
       case ClickHouseType.Ipv6Type t -> new Ipv6Appender(t);
@@ -850,6 +852,113 @@ public final class BlockBuilder {
       long[] exact = Arrays.copyOf(values, size);
       size = 0;
       return new Columns.DateTime64Column(type, exact, precision, zone);
+    }
+  }
+
+  private static final class TimeAppender extends PrimitiveAppender {
+    /** ClickHouse bounds Time to [-999:59:59, 999:59:59]. */
+    private static final long MAX_SECONDS = 999L * 3600 + 59 * 60 + 59;
+
+    private int[] values = new int[16];
+
+    TimeAppender(ClickHouseType.TimeType type) {
+      super(type);
+    }
+
+    @Override
+    public void append(Object value) {
+      if (!(value instanceof java.time.Duration duration)) {
+        throw mismatch(value, type);
+      }
+      if (duration.getNano() != 0) {
+        throw new ChordTypeException(
+            duration + " carries more precision than Time stores; use Time64");
+      }
+      long seconds = duration.getSeconds();
+      if (seconds < -MAX_SECONDS || seconds > MAX_SECONDS) {
+        throw new ChordTypeException(duration + " is outside the Time range of +-999:59:59");
+      }
+      if (size == values.length) {
+        values = Arrays.copyOf(values, size * 2);
+      }
+      values[size++] = (int) seconds;
+    }
+
+    @Override
+    public void appendDefault() {
+      append(java.time.Duration.ZERO);
+    }
+
+    @Override
+    public Column finish() {
+      int[] exact = Arrays.copyOf(values, size);
+      size = 0;
+      return new Columns.TimeColumn(type, exact);
+    }
+  }
+
+  private static final class Time64Appender extends PrimitiveAppender {
+    private static final long MAX_SECONDS = 999L * 3600 + 59 * 60 + 59;
+
+    private long[] values = new long[16];
+    private final int precision;
+
+    Time64Appender(ClickHouseType.Time64Type type) {
+      super(type);
+      this.precision = type.precision();
+    }
+
+    @Override
+    public void append(Object value) {
+      if (!(value instanceof java.time.Duration duration)) {
+        throw mismatch(value, type);
+      }
+      long perSecond = pow10(precision);
+      long nanosPerTick = pow10(9 - precision);
+      if (duration.getNano() % nanosPerTick != 0) {
+        throw new ChordTypeException(
+            duration + " carries more precision than " + type.name() + " stores");
+      }
+      long ticks;
+      try {
+        ticks =
+            Math.addExact(
+                Math.multiplyExact(duration.getSeconds(), perSecond),
+                duration.getNano() / nanosPerTick);
+      } catch (ArithmeticException e) {
+        throw new ChordTypeException(
+            duration + " is outside the " + type.name() + " range of +-999:59:59");
+      }
+      // The bound covers the fractional part: +-999:59:59 point whatever the precision holds.
+      long maxTicks = MAX_SECONDS * perSecond + (perSecond - 1);
+      if (ticks < -maxTicks || ticks > maxTicks) {
+        throw new ChordTypeException(
+            duration + " is outside the " + type.name() + " range of +-999:59:59");
+      }
+      if (size == values.length) {
+        values = Arrays.copyOf(values, size * 2);
+      }
+      values[size++] = ticks;
+    }
+
+    private static long pow10(int exponent) {
+      long result = 1;
+      for (int i = 0; i < exponent; i++) {
+        result *= 10;
+      }
+      return result;
+    }
+
+    @Override
+    public void appendDefault() {
+      append(java.time.Duration.ZERO);
+    }
+
+    @Override
+    public Column finish() {
+      long[] exact = Arrays.copyOf(values, size);
+      size = 0;
+      return new Columns.Time64Column(type, exact, precision);
     }
   }
 

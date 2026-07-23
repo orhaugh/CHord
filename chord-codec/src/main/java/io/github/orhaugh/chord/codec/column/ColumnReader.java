@@ -105,6 +105,9 @@ public final class ColumnReader {
       case DateTime64Type t ->
           new Columns.DateTime64Column(
               t, readLongs(in, rows), t.precision(), zoneFor(t.timezone(), context));
+      case ClickHouseType.TimeType t -> new Columns.TimeColumn(t, readInts(in, rows));
+      case ClickHouseType.Time64Type t ->
+          new Columns.Time64Column(t, readLongs(in, rows), t.precision());
       case UuidType t -> readUuid(in, t, rows);
       case Ipv4Type t -> new Columns.Ipv4Column(t, readInts(in, rows));
       case Ipv6Type t -> new Columns.Ipv6Column(t, readFixedBytes(in, rows, 16), rows);

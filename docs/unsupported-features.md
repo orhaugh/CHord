@@ -26,7 +26,6 @@ accumulation. What remains from the Phase 2 scope:
 | `Flow.Publisher` streaming adapter | The pull based `QueryResult` is primary; the reactive adapter follows |
 | Row oriented convenience access | Columnar access is primary per ADR-0005 |
 | Non empty external tables | Sending data along with SELECT |
-| Time and Time64 | Recently introduced upstream; parser and codec land with Phase 3 |
 | Progress and log callbacks | Accessors exist; push callbacks arrive with the async API in Phase 5 |
 
 ## Phase 3 remainder: INSERT conveniences

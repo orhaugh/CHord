@@ -22,6 +22,7 @@ import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -560,6 +561,82 @@ public final class Columns {
     @Override
     public Object objectAt(int row) {
       return localDateAt(row);
+    }
+  }
+
+  /** DateTime column: unsigned seconds since the epoch with its column or session zone. */
+  /** Time column: signed seconds beyond calendar semantics, surfacing as {@link Duration}. */
+  public static final class TimeColumn extends Base {
+    private final int[] seconds;
+
+    TimeColumn(ClickHouseType type, int[] seconds) {
+      super(type, seconds.length);
+      this.seconds = seconds;
+    }
+
+    /**
+     * Returns the signed duration at a row.
+     *
+     * @param row row index
+     * @return the duration
+     */
+    public Duration durationAt(int row) {
+      checkRow(row);
+      return Duration.ofSeconds(seconds[row]);
+    }
+
+    int rawSecondsAt(int row) {
+      checkRow(row);
+      return seconds[row];
+    }
+
+    @Override
+    public Object objectAt(int row) {
+      return durationAt(row);
+    }
+  }
+
+  /** Time64 column: signed sub second ticks at a fixed precision, surfacing as {@link Duration}. */
+  public static final class Time64Column extends Base {
+    private final long[] ticks;
+    private final int precision;
+
+    Time64Column(ClickHouseType type, long[] ticks, int precision) {
+      super(type, ticks.length);
+      this.ticks = ticks;
+      this.precision = precision;
+    }
+
+    /**
+     * Returns the signed duration at a row.
+     *
+     * @param row row index
+     * @return the duration
+     */
+    public Duration durationAt(int row) {
+      checkRow(row);
+      long value = ticks[row];
+      long perSecond = 1;
+      for (int i = 0; i < precision; i++) {
+        perSecond *= 10;
+      }
+      long seconds = Math.floorDiv(value, perSecond);
+      long fraction = Math.floorMod(value, perSecond);
+      long nanosPerTick = 1_000_000_000L;
+      for (int i = 0; i < precision; i++) {
+        nanosPerTick /= 10;
+      }
+      return Duration.ofSeconds(seconds, fraction * nanosPerTick);
+    }
+
+    long rawTicksAt(int row) {
+      checkRow(row);
+      return ticks[row];
+    }
+
+    @Override
+    public Object objectAt(int row) {
+      return durationAt(row);
     }
   }
 

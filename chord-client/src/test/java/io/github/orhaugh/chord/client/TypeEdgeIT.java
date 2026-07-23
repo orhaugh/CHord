@@ -61,6 +61,51 @@ class TypeEdgeIT {
   }
 
   @Test
+  void timeAndTime64RoundTripAgainstTheServer() {
+    try (NativeConnection connection = connect()) {
+      try (QueryResult result =
+          connection.query(QueryRequest.of("SET allow_experimental_time_time64_type = 1"))) {
+        while (result.nextBlock().isPresent()) {
+          // Drain.
+        }
+      } catch (io.github.orhaugh.chord.ChordServerException e) {
+        org.junit.jupiter.api.Assumptions.abort("server predates the Time types: " + e.code());
+      }
+      execute(
+          connection, "CREATE TABLE time_edge (id UInt8, t Time, t64 Time64(3)) ENGINE = Memory");
+      java.time.Duration max = java.time.Duration.ofSeconds(999L * 3600 + 59 * 60 + 59);
+      try (InsertStream insert =
+          connection.insert(QueryRequest.of("INSERT INTO time_edge VALUES"))) {
+        io.github.orhaugh.chord.codec.column.BlockBuilder builder = insert.newBlock();
+        builder.addRow(1, max, max.plusMillis(999));
+        builder.addRow(2, max.negated(), max.negated().minusMillis(999));
+        builder.addRow(3, java.time.Duration.ofHours(25), java.time.Duration.ofMillis(1));
+        insert.send(builder.build());
+        insert.finish();
+      }
+      try (QueryResult result =
+          connection.query(QueryRequest.of("SELECT t, t64 FROM time_edge ORDER BY id"))) {
+        Block block = result.nextBlock().orElseThrow();
+        var t = (io.github.orhaugh.chord.codec.column.Columns.TimeColumn) block.column(0);
+        var t64 = (io.github.orhaugh.chord.codec.column.Columns.Time64Column) block.column(1);
+        org.assertj.core.api.Assertions.assertThat(t.durationAt(0)).isEqualTo(max);
+        org.assertj.core.api.Assertions.assertThat(t.durationAt(1)).isEqualTo(max.negated());
+        org.assertj.core.api.Assertions.assertThat(t.durationAt(2))
+            .isEqualTo(java.time.Duration.ofHours(25));
+        org.assertj.core.api.Assertions.assertThat(t64.durationAt(0))
+            .isEqualTo(max.plusMillis(999));
+        org.assertj.core.api.Assertions.assertThat(t64.durationAt(1))
+            .isEqualTo(max.negated().minusMillis(999));
+        org.assertj.core.api.Assertions.assertThat(t64.durationAt(2))
+            .isEqualTo(java.time.Duration.ofMillis(1));
+        while (result.nextBlock().isPresent()) {
+          // Drain.
+        }
+      }
+    }
+  }
+
+  @Test
   void floatSpecialValuesRoundTripAndArriveFromServerExpressions() {
     try (NativeConnection connection = connect()) {
       execute(

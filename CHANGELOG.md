@@ -33,6 +33,14 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
   ClientInfo, so server side spans in `system.opentelemetry_span_log` join the caller's
   trace. No OpenTelemetry dependency is required.
 
+- Time and Time64 types, both directions: signed durations beyond a single day
+  (+-999:59:59, sub second at the declared precision for Time64), surfacing as
+  `java.time.Duration` with lossless validation (sub tick precision and out of range values
+  refused). JDBC maps them to `Types.TIME` with `Duration` through
+  `getObject(column, Duration.class)`; `getTime` stays honestly unsupported because the
+  range exceeds `java.sql.Time`. Verified against a real server behind
+  `allow_experimental_time_time64_type`, skipping on servers that predate the types.
+
 - External tables: `QueryRequest.Builder.externalTable(name, block)` sends named data blocks
   ahead of query execution, visible to that query as temporary tables, the native protocol's
   mechanism for joining client side data without an INSERT.

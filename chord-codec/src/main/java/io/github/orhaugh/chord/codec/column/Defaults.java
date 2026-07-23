@@ -76,6 +76,8 @@ final class Defaults {
       case Date32Type t -> LocalDate.ofEpochDay(0);
       case DateTimeType t -> Instant.EPOCH;
       case DateTime64Type t -> Instant.EPOCH;
+      case ClickHouseType.TimeType t -> java.time.Duration.ZERO;
+      case ClickHouseType.Time64Type t -> java.time.Duration.ZERO;
       case UuidType t -> new UUID(0, 0);
       case Ipv4Type t -> zeroAddress(4);
       case Ipv6Type t -> zeroAddress(16);
