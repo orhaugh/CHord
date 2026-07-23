@@ -47,15 +47,15 @@ tests.
 
 ## Supported ClickHouse servers
 
-CHord is tested in CI against every currently supported ClickHouse release: **25.8 (LTS), 26.3
-(LTS) and 26.6**, plus the newest builds in a nightly compatibility sweep. Servers older than
+CHord is tested in CI against **24.8 (LTS), 25.8 (LTS), 26.3 (LTS) and 26.6**, plus the newest
+builds in a nightly compatibility sweep. Servers older than
 protocol revision 54458 are refused explicitly. A protocol revision is not a server version; see
 [docs/protocol-compatibility.md](docs/protocol-compatibility.md).
 
 ## Requirements
 
 - Java 21 or newer at runtime (artifacts are built with `--release 21`)
-- ClickHouse 25.8 or newer
+- ClickHouse 24.8 or newer (swept in CI against 24.8, 25.8, 26.3 and 26.6)
 
 ## Using it today
 

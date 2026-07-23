@@ -17,6 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         image:
+          - clickhouse/clickhouse-server:24.8
           - clickhouse/clickhouse-server:25.8
           - clickhouse/clickhouse-server:26.3
           - clickhouse/clickhouse-server:26.6

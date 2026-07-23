@@ -18,6 +18,7 @@ reported. CHord evaluates every gate through the `ProtocolFeature` registry in `
 
 | ClickHouse release | `DBMS_TCP_PROTOCOL_VERSION` |
 |---|---|
+| 24.8 (LTS) | 54471 |
 | 25.8 (LTS) | 54479 |
 | 26.3 (LTS) | 54484 |
 | 26.6 | 54485 |

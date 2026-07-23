@@ -146,7 +146,10 @@ class AdvancedTypesIT {
   void variantDynamicAndJsonWriteThroughNativeBlocks() {
     try (NativeConnection connection = connect()) {
       for (String setting :
-          java.util.List.of("allow_experimental_variant_type", "allow_experimental_dynamic_type")) {
+          java.util.List.of(
+              "allow_experimental_variant_type",
+              "allow_experimental_dynamic_type",
+              "allow_experimental_json_type")) {
         try (QueryResult result = connection.query(QueryRequest.of("SET " + setting + " = 1"))) {
           while (result.nextBlock().isPresent()) {
             // Drain; unknown on newer servers where the types went stable is fine.
@@ -172,15 +175,21 @@ class AdvancedTypesIT {
       try (QueryResult result =
           connection.query(
               QueryRequest.of(
-                  "SELECT toString(v), toString(d), toString(j) FROM adv_writes ORDER BY id"))) {
+                  "SELECT toString(v), toString(d), toString(j), v IS NULL, d IS NULL"
+                      + " FROM adv_writes ORDER BY id"))) {
         Block block = result.nextBlock().orElseThrow();
         assertThat(block.column(0).objectAt(0)).isEqualTo("42");
         assertThat(block.column(1).objectAt(0)).isEqualTo("dynamic-string");
-        // Dotted paths reconstruct as nested objects with typed values.
-        assertThat(block.column(2).objectAt(0)).isEqualTo("{\"a\":1,\"b\":{\"c\":\"x\"}}");
+        // Dotted paths reconstruct as nested objects; older servers render dynamic path
+        // numbers quoted, newer ones typed, so both forms are accepted.
+        assertThat((String) block.column(2).objectAt(0))
+            .matches("\\{\"a\":\"?1\"?,\"b\":\\{\"c\":\"x\"}}");
         assertThat(block.column(0).objectAt(1)).isEqualTo("variant-string");
         assertThat(block.column(1).objectAt(1)).isEqualTo("2.5");
-        assertThat(block.column(0).objectAt(2)).isEqualTo("\u1D3A\u1D41\u1D38\u1D38");
+        // NULL renders differently across versions; the IS NULL semantics are stable.
+        assertThat(block.column(3).objectAt(2)).isEqualTo(1);
+        assertThat(block.column(4).objectAt(2)).isEqualTo(1);
+        assertThat(block.column(3).objectAt(0)).isEqualTo(0);
         assertThat(block.column(2).objectAt(2)).isEqualTo("{}");
         while (result.nextBlock().isPresent()) {
           // Drain.

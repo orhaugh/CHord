@@ -276,7 +276,11 @@ public final class ColumnWriter {
         }
       }
       case Columns.DynamicColumn c -> {
-        out.writeInt64Le(2); // structure version V2
+        // V1 for maximum compatibility: every server reads it, while V2 prefixes are
+        // rejected by servers older than 25.x ("Invalid version for Dynamic structure
+        // serialization" on 24.8).
+        out.writeInt64Le(1); // structure version V1
+        out.writeVarUInt(c.dynamicTypes().size()); // legacy max_dynamic_types
         out.writeVarUInt(c.dynamicTypes().size());
         for (io.github.orhaugh.chord.codec.type.ClickHouseType dynamicType : c.dynamicTypes()) {
           out.writeString(dynamicType.name());
@@ -284,7 +288,8 @@ public final class ColumnWriter {
         writePrefix(out, c.variant());
       }
       case Columns.JsonColumn c -> {
-        out.writeInt64Le(2); // object serialisation version V2
+        out.writeInt64Le(0); // object serialisation version V1 (wire value 0), readable everywhere
+        out.writeVarUInt(c.dynamicPaths().size()); // legacy max_dynamic_paths
         out.writeVarUInt(c.dynamicPaths().size());
         for (String path : c.dynamicPaths().keySet()) {
           out.writeString(path);
