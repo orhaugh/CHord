@@ -47,6 +47,10 @@
       <artifactId>chord-protocol</artifactId>
     </dependency>
     <dependency>
+      <groupId>io.github.orhaugh</groupId>
+      <artifactId>chord-codec</artifactId>
+    </dependency>
+    <dependency>
       <groupId>org.openjdk.jmh</groupId>
       <artifactId>jmh-core</artifactId>
     </dependency>
@@ -108,4 +112,49 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- Executes every benchmark once with minimal iterations, in process, so the harness
+         itself is exercised by CI and local builds: ./mvnw -Pbench-smoke package -pl
+         chord-benchmarks -am. Real measurement runs use the shaded jar directly:
+         java -jar chord-benchmarks/target/chord-benchmarks.jar -->
+    <profile>
+      <id>bench-smoke</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <version>3.5.0</version>
+            <executions>
+              <execution>
+                <id>jmh-smoke</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <executable>java</executable>
+                  <arguments>
+                    <argument>-jar</argument>
+                    <argument>${project.build.directory}/chord-benchmarks.jar</argument>
+                    <argument>-f</argument>
+                    <argument>0</argument>
+                    <argument>-wi</argument>
+                    <argument>1</argument>
+                    <argument>-i</argument>
+                    <argument>1</argument>
+                    <argument>-w</argument>
+                    <argument>200ms</argument>
+                    <argument>-r</argument>
+                    <argument>200ms</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

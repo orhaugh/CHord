@@ -337,4 +337,59 @@ class TlsTransportTest {
         .isInstanceOf(ChordConfigurationException.class)
         .hasMessageContaining("no key password");
   }
+
+  @Test
+  void tornDownSessionsSurfaceAsErrorsNeverCleanEof() throws Exception {
+    // A TCP FIN without a TLS close_notify is a truncation, and treating it as end of
+    // stream is the classic truncation attack. The bytes sent before the teardown must
+    // arrive; the read after them must raise, never return -1.
+    javax.net.ssl.SSLContext serverContext = TlsTestServer.serverContext(certs);
+    try (java.net.ServerSocket raw =
+        new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
+      Thread serverThread =
+          Thread.ofVirtual()
+              .start(
+                  () -> {
+                    try {
+                      // Managed by hand: the abrupt close IS the scenario under test.
+                      java.net.Socket plain = raw.accept();
+                      javax.net.ssl.SSLSocket tls =
+                          (javax.net.ssl.SSLSocket)
+                              serverContext
+                                  .getSocketFactory()
+                                  .createSocket(plain, null, plain.getPort(), false);
+                      tls.setUseClientMode(false);
+                      tls.startHandshake();
+                      tls.getOutputStream().write(new byte[] {10, 20, 30, 40});
+                      tls.getOutputStream().flush();
+                      // Close the raw TCP socket: FIN travels, close_notify does not.
+                      plain.close();
+                    } catch (Exception e) {
+                      // Client side assertions carry the test.
+                    }
+                  });
+
+      TlsTransport transport =
+          TlsTransport.connect(
+              "localhost", raw.getLocalPort(), TransportOptions.DEFAULTS, pemTrust());
+      try {
+        // The bytes sent before the teardown arrive intact.
+        byte[] delivered = transport.inputStream().readNBytes(2);
+        assertThat(delivered).isEqualTo(new byte[] {10, 20});
+        // JSSE surfaces the missing close_notify as end of stream, so the guarantee
+        // lives one layer up: a wire read that spans the teardown must be a typed
+        // protocol failure, never a short but successful result.
+        io.github.orhaugh.chord.protocol.wire.WireReader wire =
+            new io.github.orhaugh.chord.protocol.wire.WireReader(
+                transport.inputStream(), io.github.orhaugh.chord.protocol.wire.WireLimits.DEFAULTS);
+        byte[] wanted = new byte[4];
+        assertThatThrownBy(() -> wire.readFully(wanted))
+            .isInstanceOf(io.github.orhaugh.chord.ChordProtocolException.class)
+            .hasMessageContaining("Stream ended");
+      } finally {
+        transport.close();
+      }
+      serverThread.join(java.time.Duration.ofSeconds(10));
+    }
+  }
 }

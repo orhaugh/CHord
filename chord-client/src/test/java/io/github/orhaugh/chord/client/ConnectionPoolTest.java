@@ -278,4 +278,68 @@ class ConnectionPoolTest {
       lease.close(); // idempotent
     }
   }
+
+  @Test
+  void poolSurvivesAServerRestartUnderConcurrentLoad() throws Exception {
+    try (LoopbackPingServer server = new LoopbackPingServer();
+        ConnectionPool pool = ConnectionPool.builder(server.options()).maxSize(4).build()) {
+      // Workers hammer acquire/ping/release; failures during the crash window are
+      // expected and must never wedge the pool or leak a permit.
+      int workers = 6;
+      CountDownLatch running = new CountDownLatch(workers);
+      java.util.concurrent.atomic.AtomicBoolean stop =
+          new java.util.concurrent.atomic.AtomicBoolean();
+      java.util.concurrent.atomic.AtomicLong successfulPings =
+          new java.util.concurrent.atomic.AtomicLong();
+      List<Thread> threads = new ArrayList<>();
+      for (int i = 0; i < workers; i++) {
+        threads.add(
+            Thread.ofVirtual()
+                .start(
+                    () -> {
+                      running.countDown();
+                      while (!stop.get()) {
+                        try (PooledConnection lease = pool.acquire()) {
+                          lease.ping();
+                          successfulPings.incrementAndGet();
+                        } catch (io.github.orhaugh.chord.ChordException e) {
+                          // The crash window: broken connections surface typed failures.
+                        }
+                      }
+                    }));
+      }
+      assertThat(running.await(10, TimeUnit.SECONDS)).isTrue();
+
+      // Two abrupt restarts while the workload runs: every live connection dies, the
+      // listener itself stays up, exactly like a fast server restart.
+      for (int restart = 0; restart < 2; restart++) {
+        long before = successfulPings.get();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (successfulPings.get() < before + 25 && System.nanoTime() < deadline) {
+          Thread.sleep(5);
+        }
+        server.dropAllConnections();
+      }
+      // The pool must recover: pings succeed again after the second restart.
+      long afterRestart = successfulPings.get();
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      while (successfulPings.get() < afterRestart + 25 && System.nanoTime() < deadline) {
+        Thread.sleep(5);
+      }
+      assertThat(successfulPings.get()).isGreaterThan(afterRestart);
+
+      stop.set(true);
+      for (Thread thread : threads) {
+        thread.join(Duration.ofSeconds(10));
+        assertThat(thread.isAlive()).isFalse();
+      }
+      // No permits leaked: the full pool capacity is still acquirable.
+      List<PooledConnection> full = new ArrayList<>();
+      for (int i = 0; i < 4; i++) {
+        full.add(pool.acquire());
+      }
+      full.forEach(PooledConnection::close);
+      assertThat(pool.activeCount()).isZero();
+    }
+  }
 }

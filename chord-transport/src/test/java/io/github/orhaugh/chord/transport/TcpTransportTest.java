@@ -98,6 +98,24 @@ class TcpTransportTest {
   }
 
   @Test
+  void remoteAddressReportsTheDialledEndpoint() throws Exception {
+    try (ServerSocket server = new ServerSocket(0)) {
+      TcpTransport transport =
+          TcpTransport.connect("127.0.0.1", server.getLocalPort(), TransportOptions.DEFAULTS);
+      try {
+        assertThat(transport.remoteAddress())
+            .isEqualTo(
+                new java.net.InetSocketAddress(
+                    java.net.InetAddress.getByName("127.0.0.1"), server.getLocalPort()));
+      } finally {
+        transport.close();
+      }
+      // The address stays answerable after close for diagnostics.
+      assertThat(transport.remoteAddress()).isNotNull();
+    }
+  }
+
+  @Test
   void connectTimeoutsSurfaceAsChordTimeouts() {
     // 240.0.0.1 is class E space that blackholes on common networks, so the SYN never
     // completes and the configured connect timeout fires. Environments that instead reject

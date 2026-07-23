@@ -47,7 +47,7 @@ final class TlsTestServer implements AutoCloseable {
     executor.submit(this::acceptLoop);
   }
 
-  private static SSLContext serverContext(TestCertificates certificates) throws Exception {
+  static SSLContext serverContext(TestCertificates certificates) throws Exception {
     CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
     Certificate serverCertificate =
         certificateFactory.generateCertificate(

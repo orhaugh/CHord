@@ -6,6 +6,26 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ## [Unreleased]
 
+### Fixed
+
+- A corrupt or hostile timezone name inside a wire type declaration (for example
+  `DateTime64(6, '...')` in a block header) escaped as a raw `java.time.DateTimeException`
+  instead of a typed decode failure, from the column reader and both datetime appenders.
+  Found by the new decoder fuzzer on its first run; malformed names now raise
+  `ChordTypeException` with the offending name quoted.
+
+### Added
+
+- The 1.0 gate test infrastructure: deterministic decoder mutation fuzzing seeded from the
+  golden vectors (scales with `-Dchord.fuzz.iterations`), a duration scaled soak suite with
+  permit leak and heap bound assertions (`-Dchord.soak.seconds`), server restart under
+  concurrent pool load, TLS teardown mid session, and executing benchmarks: chord-benchmarks
+  joined the reactor, gained a block codec benchmark for the decode and encode hot path, and
+  runs end to end under `-Pbench-smoke`. Every P2 hygiene row in the coverage audit is
+  closed (packet type tables, wire reader auxiliary surface, settings flags, transport
+  options, error code boundaries, geometry aliases, and randomised value round trips across
+  a 20 type pool).
+
 ## [0.1.0] - 2026-07-23
 
 First public release: the native TCP protocol client and its JDBC adapter, tested against

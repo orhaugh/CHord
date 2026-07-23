@@ -132,25 +132,48 @@ Documented, not tested
   parameters, so only system trusted certificates work through JDBC today. Recorded as a
   feature gap for the roadmap (native API callers can pass full `TlsOptions`).
 
-### P2: hygiene and polish
+### P2: hygiene and polish (CLOSED)
 
-- Direct unit tests for ServerPacketType.fromCode and ClientPacketType (behaviour covered
-  indirectly today), WireReader.readFully/asInputStream/hasBufferedBytes, WireWriter byte
-  array writeString overload, ServerSetting FLAG_IMPORTANT, TransportOptions
-  withConnectTimeout, remoteAddress accessors, ServerErrorCodes boundary.
-- Geometry alias value decode asserted as their tuple and array shapes.
-- Property based block round trips (generate random typed values per column type) to widen
-  the 7 existing properties.
-- Testkit itself has no tests (acceptable: it is test infrastructure).
+| Finding | Closed by |
+| --- | --- |
+| Packet type tables untested directly | `PacketTypesTest` (5 tests: every code resolves to itself, codes pinned to Protocol.h, unknown codes fail explicitly, inter server packets flagged, client table dense) |
+| WireReader/WireWriter auxiliary surface | `WirePrimitivesTest` additions: `readFullyFillsExactlyOrFailsExplicitly`, `theInputStreamViewReadsThroughTheReaderBuffer` (unsigned reads, shared position, throw on exhaustion), `bufferedBytesReportPendingDataWithoutTouchingTheStream`, `byteArrayStringsWriteIdenticallyToTheirDecodedForm` |
+| ServerSetting flags | `ServerSettingTest` (independent bits, combined, unknown high bits, null guards) |
+| TransportOptions withers, remoteAddress | `TransportOptionsTest` (copies carry one change, validation refuses nonsense), `TcpTransportTest.remoteAddressReportsTheDialledEndpoint` |
+| ServerErrorCodes boundary | `ServerErrorCodesTest` (four credential codes true; access denied, unknown database and all boundary neighbours false) |
+| Geometry alias decode | `GeometryAliasesTest` (Point/Ring/LineString/Polygon/MultiLineString/MultiPolygon shapes, coordinate round trips including empty rings) |
+| Property based value round trips | `BlockValuePropertyTest` (400 tries over a 20 type pool with random values and row counts including zero) |
+| Testkit itself has no tests | Accepted: it is test infrastructure. |
 
-## Missing infrastructure (roadmap scale, already 1.0 gates)
+## Infrastructure (1.0 gates, DELIVERED)
 
-- Fault injection suite: scripted mid stream socket kills per protocol phase (partially
-  delivered by P0-3/P0-4), server restart under pool load, TLS teardown mid session.
-- Soak suite: hours long mixed workload with leak and memory bound assertions.
-- Decoder fuzzing (for example Jazzer over BlockReader/Serializations/FrameDecompressing
-  InputStream with corpus seeded from the golden vectors).
-- Benchmarks execute nothing today (compile only); no performance regression net.
+- Fault injection: scripted mid stream socket kills per protocol phase (`FaultInjectionTest`,
+  six phases), server restart under concurrent pool load
+  (`ConnectionPoolTest.poolSurvivesAServerRestartUnderConcurrentLoad`, two restarts inside a
+  six worker storm with permit leak assertions), TLS teardown mid session
+  (`TlsTransportTest.tornDownSessionsSurfaceAsErrorsNeverCleanEof`: a FIN without
+  close_notify surfaces as end of stream from JSSE, and the wire layer turns it into a typed
+  "Stream ended" failure, never a short but successful read).
+- Decoder fuzzing: `DecoderFuzzTest`, deterministic mutation fuzzing (truncations, bit flips,
+  byte substitutions, varint inflation, splices) seeded from the eight golden serialization
+  vectors, three compressed frames and freshly encoded blocks. Oracle: hostile bytes decode
+  or raise a typed ChordException; anything else fails the build. Runs in every build at 300
+  iterations per seed; scale with `-Dchord.fuzz.iterations` (a 20000 iteration pass is
+  clean). Found a real defect on its first run: a corrupt timezone name inside a wire type
+  declaration escaped as a raw `java.time.DateTimeException` from three call sites; fixed by
+  `Timezones.parse` and pinned by
+  `SerializationGuardsTest.malformedTimezonesInTypeDeclarationsFailTyped`.
+- Soak suite: `SoakIT`, opt in via `-Dchord.soak.seconds=N` under the integration profile.
+  Eight workers mix streaming selects, batched inserts, cross thread cancels and pings over
+  a shared pool for the configured duration; asserts no unexpected failures, no wedged
+  workers, zero leaked permits, server side row count equal to the client side count, and
+  heap after collection back within 128 MiB of its baseline. Sixty second smoke green; an
+  hour or more is the release gate cadence.
+- Benchmarks: `chord-benchmarks` joined the reactor (it previously never built with the
+  project), gained `BlockCodecBenchmark` for the block decode and encode hot path alongside
+  the VarInt codec, and executes under `-Pbench-smoke` (in process, minimal iterations) so
+  the harness itself cannot rot. Real measurements:
+  `java -jar chord-benchmarks/target/chord-benchmarks.jar`.
 
 ## Recommended burn down order
 
@@ -158,5 +181,6 @@ Documented, not tested
 2. P1 JDBC block: DONE (chord-jdbc moved from 41% line coverage to the full surface tables
    above).
 3. P1 resilience and codec remainder: DONE.
-4. Remaining: P2 hygiene items, then fuzzing plus fault injection scaffolding and the soak
-   suite (1.0 gates).
+4. P2 hygiene and the 1.0 gate infrastructure: DONE (the fuzzer found and fixed the
+   malformed timezone escape on its first run). The register is empty; new gaps get new
+   rows.

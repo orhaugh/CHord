@@ -141,4 +141,61 @@ class WirePrimitivesTest {
             });
     assertThat(out).isEqualTo(payload);
   }
+
+  @Test
+  void byteArrayStringsWriteIdenticallyToTheirDecodedForm() {
+    byte[] viaString = WireTestUtil.written(w -> w.writeString("héllo"));
+    byte[] viaBytes =
+        WireTestUtil.written(
+            w -> w.writeString("héllo".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    assertThat(viaBytes).isEqualTo(viaString);
+    // Raw bytes need no UTF-8 validity: arbitrary payloads travel length prefixed.
+    assertThat(WireTestUtil.written(w -> w.writeString(bytes(0xFE, 0xFF))))
+        .isEqualTo(bytes(0x02, 0xFE, 0xFF));
+  }
+
+  @Test
+  void readFullyFillsExactlyOrFailsExplicitly() {
+    byte[] out = new byte[4];
+    reader(bytes(1, 2, 3, 4)).readFully(out);
+    assertThat(out).isEqualTo(bytes(1, 2, 3, 4));
+
+    byte[] tooBig = new byte[4];
+    assertThatThrownBy(() -> reader(bytes(1, 2, 3)).readFully(tooBig))
+        .isInstanceOf(ChordProtocolException.class)
+        .hasMessageContaining("Stream ended");
+  }
+
+  @Test
+  void theInputStreamViewReadsThroughTheReaderBuffer() throws java.io.IOException {
+    WireReader in = reader(bytes(0xFE, 1, 2, 3, 4, 5));
+    java.io.InputStream view = in.asInputStream();
+    // Single byte reads come back unsigned, never sign extended.
+    assertThat(view.read()).isEqualTo(254);
+    byte[] target = new byte[5];
+    assertThat(view.read(target, 1, 3)).isEqualTo(3);
+    assertThat(target).isEqualTo(bytes(0, 1, 2, 3, 0));
+    assertThat(view.read(target, 0, 0)).isZero();
+    // Both consumers share one position: the reader continues where the view stopped.
+    assertThat(in.readUInt8()).isEqualTo(4);
+    assertThat(view.read()).isEqualTo(5);
+    // Exhaustion is an explicit protocol failure, not a quiet -1: a packet body that ends
+    // early is a broken stream, and layered decoders must not treat it as clean EOF.
+    assertThatThrownBy(view::read)
+        .isInstanceOf(ChordProtocolException.class)
+        .hasMessageContaining("Stream ended");
+  }
+
+  @Test
+  void bufferedBytesReportPendingDataWithoutTouchingTheStream() {
+    WireReader in = reader(bytes(7, 8, 9));
+    // Nothing has been pulled from the underlying stream yet.
+    assertThat(in.hasBufferedBytes()).isFalse();
+    assertThat(in.readUInt8()).isEqualTo(7);
+    // The first read buffered the remainder of the chunk.
+    assertThat(in.hasBufferedBytes()).isTrue();
+    in.readUInt8();
+    in.readUInt8();
+    assertThat(in.hasBufferedBytes()).isFalse();
+  }
 }

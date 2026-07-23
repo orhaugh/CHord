@@ -71,6 +71,7 @@
     <module>chord-jdbc</module>
     <module>chord-testkit</module>
     <module>chord-examples</module>
+    <module>chord-benchmarks</module>
   </modules>
 
   <properties>
