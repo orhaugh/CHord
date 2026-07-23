@@ -232,6 +232,34 @@ class InsertIT {
   }
 
   @Test
+  void bufferedInsertsFlushByThresholdAndCommitOnFinish() {
+    try (NativeConnection connection = connect()) {
+      String table = createTable(connection, "n UInt64, s String");
+
+      try (InsertStream insert =
+          connection.insert(QueryRequest.of("INSERT INTO " + table + " VALUES"))) {
+        BufferedInsert buffered = insert.buffered(1_000, Long.MAX_VALUE);
+        for (long n = 0; n < 2_500; n++) {
+          buffered.addRow(n, "row-" + n);
+        }
+        InsertStream.InsertSummary summary = buffered.finish();
+        // Two threshold flushes plus the remainder at finish.
+        assertThat(summary.rowsSent()).isEqualTo(2_500);
+        assertThat(summary.blocksSent()).isEqualTo(3);
+      }
+
+      assertThat(count(connection, table)).isEqualTo(2_500);
+      try (QueryResult result =
+          connection.query(
+              QueryRequest.of(
+                  "SELECT count() FROM " + table + " WHERE s = concat('row-', toString(n))"))) {
+        assertThat(((Columns.UInt64Column) result.nextBlock().orElseThrow().column(0)).rawLongAt(0))
+            .isEqualTo(2_500);
+      }
+    }
+  }
+
+  @Test
   void insertIntoUnknownTableFailsTypedAndTheConnectionRemainsUsable() {
     try (NativeConnection connection = connect()) {
       assertThatThrownBy(

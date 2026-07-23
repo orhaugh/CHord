@@ -312,6 +312,61 @@ class NativeConnectionTest {
   }
 
   @Test
+  void bufferedInsertsFlushOnRowAndByteThresholds() {
+    ScriptedTransport transport =
+        new ScriptedTransport(
+            script(
+                w -> {
+                  writeServerHello(w);
+                  w.writeVarUInt(1); // Server::Data: the insert schema
+                  w.writeString("");
+                  io.github.orhaugh.chord.codec.block.BlockWriter.write(
+                      w,
+                      io.github.orhaugh.chord.codec.column.BlockBuilder.forSchema(
+                              decodeSchema("n", "UInt64"))
+                          .build(),
+                      SERVER_REVISION);
+                  w.writeVarUInt(5); // EndOfStream
+                }));
+    try (NativeConnection connection = NativeConnection.open(options(), transport)) {
+      InsertStream insert = connection.insert(QueryRequest.of("INSERT INTO t VALUES"));
+      BufferedInsert buffered = insert.buffered(10, Long.MAX_VALUE);
+      for (long n = 0; n < 25; n++) {
+        buffered.addRow(java.math.BigInteger.valueOf(n));
+      }
+      InsertStream.InsertSummary summary = buffered.finish();
+      // 25 rows at 10 per block: two full flushes plus the remainder at finish.
+      assertThat(summary.rowsSent()).isEqualTo(25);
+      assertThat(summary.blocksSent()).isEqualTo(3);
+    }
+
+    ScriptedTransport byteTransport =
+        new ScriptedTransport(
+            script(
+                w -> {
+                  writeServerHello(w);
+                  w.writeVarUInt(1);
+                  w.writeString("");
+                  io.github.orhaugh.chord.codec.column.BlockBuilder schema =
+                      io.github.orhaugh.chord.codec.column.BlockBuilder.forSchema(
+                          decodeSchema("s", "String"));
+                  io.github.orhaugh.chord.codec.block.BlockWriter.write(
+                      w, schema.build(), SERVER_REVISION);
+                  w.writeVarUInt(5);
+                }));
+    try (NativeConnection connection = NativeConnection.open(options(), byteTransport)) {
+      InsertStream insert = connection.insert(QueryRequest.of("INSERT INTO t VALUES"));
+      // Each row estimates far beyond the byte threshold: one block per row.
+      BufferedInsert buffered = insert.buffered(1_000_000, 10);
+      buffered.addRow("a-long-enough-string");
+      buffered.addRow("another-long-string");
+      InsertStream.InsertSummary summary = buffered.finish();
+      assertThat(summary.rowsSent()).isEqualTo(2);
+      assertThat(summary.blocksSent()).isEqualTo(2);
+    }
+  }
+
+  @Test
   void insertExchangesDispatchProgressPacketsToListeners() {
     // Real servers do not send Progress for client fed inserts (verified against 25.8), but
     // the protocol allows it, so the dispatch and accumulation paths are proven here.

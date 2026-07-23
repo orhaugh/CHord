@@ -15,6 +15,7 @@
  */
 package io.github.orhaugh.chord.client;
 
+import io.github.orhaugh.chord.ChordConfigurationException;
 import io.github.orhaugh.chord.annotations.Experimental;
 import io.github.orhaugh.chord.codec.block.Block;
 import io.github.orhaugh.chord.codec.column.BlockBuilder;
@@ -46,6 +47,23 @@ public interface InsertStream extends AutoCloseable {
    * @return the schema block
    */
   Block schema();
+
+  /**
+   * Wraps this stream in a row at a time inserter that flushes blocks automatically once either
+   * threshold is reached. 65409 rows matches the server's default block size; the byte threshold
+   * works on a rough client side estimate. Finish through the returned inserter; closing it without
+   * finishing keeps this stream's hard abort semantics.
+   *
+   * @param maxRows rows per block before a flush, at least 1
+   * @param maxEstimatedBytes estimated bytes per block before a flush, at least 1
+   * @return the buffering inserter
+   */
+  default BufferedInsert buffered(int maxRows, long maxEstimatedBytes) {
+    if (maxRows < 1 || maxEstimatedBytes < 1) {
+      throw new ChordConfigurationException("buffered thresholds must be at least 1");
+    }
+    return new BufferedInsert(this, maxRows, maxEstimatedBytes);
+  }
 
   /**
    * Returns the parsed table columns description, present when the server sent the TableColumns

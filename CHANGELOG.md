@@ -54,6 +54,12 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
   ahead of query execution, visible to that query as temporary tables, the native protocol's
   mechanism for joining client side data without an INSERT.
 
+- Buffered inserts: `InsertStream.buffered(maxRows, maxEstimatedBytes)` returns a
+  `BufferedInsert` that takes rows one at a time and flushes blocks automatically when
+  either threshold is crossed, so callers stop managing block boundaries by hand. The byte
+  threshold works on a rough client side estimate; `finish()` flushes the remainder and
+  commits, and closing without finishing keeps the stream's hard abort semantics.
+
 - Record mapping: `Records.stream(result, MyRecord.class)` maps rows onto Java records by
   component name with lossless conversions, and `Records.insertAll(insert, records,
   rowsPerBlock)` sends iterables of records against the server supplied schema. The columnar
