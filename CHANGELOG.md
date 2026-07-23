@@ -6,6 +6,21 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ## [Unreleased]
 
+### Added
+
+- A statement kind and production flow test matrix (docs/test-coverage-audit.md): at least
+  one test per ClickHouse statement kind the client carries, covering the DDL lifecycle
+  including DETACH/ATTACH, EXCHANGE and CHECK TABLE, introspection (SHOW, DESCRIBE, EXISTS),
+  EXPLAIN, the SELECT clause zoo (PREWHERE, FINAL, SAMPLE, ARRAY JOIN, LIMIT BY, UNION,
+  CTEs, joins, window functions, ROLLUP), lightweight and classic mutations, OPTIMIZE,
+  materialized views, column subset inserts, SET/USE session state, session timezones and
+  SYSTEM statements; plus operational flows: KILL QUERY from another connection, readonly
+  users under full grants, server side execution timeouts, schema evolution visible to
+  pooled connections, and session setting persistence. Every refusal asserted typed,
+  honestly classified and connection preserving. Documented finding: as of the 25.8
+  TCPHandler source, servers only emit TimezoneUpdate packets on the input() table function
+  path, so the client's handler is proven by a scripted transport test.
+
 ## [0.1.0] - 2026-07-23
 
 First public release: the native TCP protocol client and its JDBC adapter, tested against

@@ -711,6 +711,48 @@ class JdbcIT {
   }
 
   @Test
+  void statementKindsFlowThroughJdbc() throws SQLException {
+    try (Connection connection = connect();
+        Statement statement = connection.createStatement()) {
+      // DDL executes with an honest zero count and no result set.
+      assertThat(
+              statement.executeUpdate(
+                  "CREATE TABLE jdbc_kinds (id UInt64, v UInt64)"
+                      + " ENGINE = MergeTree ORDER BY id"))
+          .isZero();
+      assertThat(statement.execute("ALTER TABLE jdbc_kinds ADD COLUMN extra UInt8 DEFAULT 3"))
+          .isFalse();
+      assertThat(statement.getUpdateCount()).isZero();
+      statement.executeUpdate("INSERT INTO jdbc_kinds SELECT number, number, 3 FROM numbers(10)");
+
+      // Introspection statements come back as ordinary result sets.
+      boolean found = false;
+      try (ResultSet tables = statement.executeQuery("SHOW TABLES")) {
+        while (tables.next()) {
+          found |= "jdbc_kinds".equals(tables.getString(1));
+        }
+      }
+      assertThat(found).isTrue();
+      try (ResultSet described = statement.executeQuery("DESCRIBE TABLE jdbc_kinds")) {
+        assertThat(described.next()).isTrue();
+        assertThat(described.getString("name")).isEqualTo("id");
+        assertThat(described.getString("type")).isEqualTo("UInt64");
+      }
+      try (ResultSet plan = statement.executeQuery("EXPLAIN SELECT sum(v) FROM jdbc_kinds")) {
+        assertThat(plan.next()).isTrue();
+        assertThat(plan.getString(1)).isNotBlank();
+      }
+
+      // A lightweight DELETE flows as an update and the effect is visible immediately.
+      statement.executeUpdate("DELETE FROM jdbc_kinds WHERE id < 4");
+      try (ResultSet count = statement.executeQuery("SELECT count() FROM jdbc_kinds")) {
+        assertThat(count.next()).isTrue();
+        assertThat(count.getLong(1)).isEqualTo(6);
+      }
+    }
+  }
+
+  @Test
   void floatSpecialValuesSurfaceThroughTheGetters() throws SQLException {
     try (Connection connection = connect();
         Statement statement = connection.createStatement();

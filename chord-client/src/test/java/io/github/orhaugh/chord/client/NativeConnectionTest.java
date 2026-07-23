@@ -148,6 +148,40 @@ class NativeConnectionTest {
   }
 
   @Test
+  void timezoneUpdatePacketsMoveTheDecodeContext() {
+    // Real servers only emit TimezoneUpdate on the input() table function path (verified
+    // against the 25.8 TCPHandler source), so the handler is proven here: a packet arriving
+    // before a data block must move the connection's decode context in time for that block.
+    ScriptedTransport transport =
+        new ScriptedTransport(
+            script(
+                w -> {
+                  writeServerHello(w);
+                  w.writeVarUInt(17); // Server::TimezoneUpdate
+                  w.writeString("Asia/Tokyo");
+                  w.writeVarUInt(1); // Server::Data
+                  w.writeString("");
+                  io.github.orhaugh.chord.codec.column.BlockBuilder builder =
+                      io.github.orhaugh.chord.codec.column.BlockBuilder.forSchema(
+                          decodeSchema("dt", "DateTime"));
+                  builder.addRow(java.time.Instant.EPOCH);
+                  io.github.orhaugh.chord.codec.block.BlockWriter.write(
+                      w, builder.build(), SERVER_REVISION);
+                  w.writeVarUInt(5); // EndOfStream
+                }));
+    try (NativeConnection connection = NativeConnection.open(options(), transport)) {
+      try (QueryResult result = connection.query(QueryRequest.of("SELECT now()"))) {
+        var column = result.nextBlock().orElseThrow().column(0);
+        assertThat(((io.github.orhaugh.chord.codec.column.Columns.DateTimeColumn) column).zone())
+            .isEqualTo(java.time.ZoneId.of("Asia/Tokyo"));
+        assertThat(result.nextBlock()).isEmpty();
+      }
+      assertThat(connection.sessionTimezone()).isEqualTo(java.time.ZoneId.of("Asia/Tokyo"));
+      assertThat(connection.state()).isEqualTo(ConnectionState.READY);
+    }
+  }
+
+  @Test
   void insertExchangesDispatchProgressPacketsToListeners() {
     // Real servers do not send Progress for client fed inserts (verified against 25.8), but
     // the protocol allows it, so the dispatch and accumulation paths are proven here.

@@ -175,6 +175,43 @@ Documented, not tested
   the harness itself cannot rot. Real measurements:
   `java -jar chord-benchmarks/target/chord-benchmarks.jar`.
 
+## Statement kind and production flow matrix (second pass, CLOSED)
+
+A second audit axis requested after the register closed: at least one test per ClickHouse
+statement kind the client must carry, and per operational flow a production user hits.
+
+| Statement kind | Covered by |
+| --- | --- |
+| CREATE/ALTER (ADD, MODIFY, DROP COLUMN)/RENAME/TRUNCATE/DROP/EXISTS | `KeywordSurfaceIT.ddlLifecycleFlowsEndToEnd` |
+| DETACH/ATTACH, EXCHANGE TABLES, CHECK TABLE | `KeywordSurfaceIT.detachAttachExchangeAndCheckTableOperate` |
+| SHOW TABLES/DATABASES/CREATE TABLE, DESCRIBE, EXISTS | `KeywordSurfaceIT.introspectionStatementsDecode` |
+| EXPLAIN AST/PIPELINE | `KeywordSurfaceIT.explainStatementsReturnPlans` |
+| FINAL, OPTIMIZE ... FINAL | `KeywordSurfaceIT.replacingMergeTreeFinalCollapsesDuplicates` |
+| PREWHERE, SAMPLE, LIMIT BY | `KeywordSurfaceIT.prewhereSampleAndLimitByFilter` |
+| ARRAY JOIN, UNION ALL, WITH (CTE), INNER JOIN | `KeywordSurfaceIT.arrayJoinUnionJoinAndCtesCompose` |
+| Window functions (OVER), GROUP BY WITH ROLLUP, DISTINCT | `KeywordSurfaceIT.windowFunctionsAndRollupAggregate` |
+| GROUP BY WITH TOTALS, extremes | `SelectQueryIT` (pre existing) |
+| Lightweight DELETE, ALTER ... UPDATE | `KeywordSurfaceIT.mutationsDeleteAndUpdateApply` |
+| ALTER ... DELETE (classic mutation), SHOW PROCESSLIST | `KeywordSurfaceIT.classicMutationDeleteAndProcesslistOperate` |
+| CREATE MATERIALIZED VIEW | `KeywordSurfaceIT.materializedViewsPopulateOnInsert` |
+| INSERT with a column subset | `KeywordSurfaceIT.insertWithAColumnSubsetFillsDefaults` |
+| INSERT ... SELECT | pre existing across `SelectQueryIT`/`JdbcIT` |
+| SET, USE, CREATE DATABASE | `KeywordSurfaceIT.setAndUseStatementsCarrySessionState` |
+| SET session_timezone | `KeywordSurfaceIT.sessionTimezoneUpdatesFollowTheServer` (server side visibility; as of the 25.8 TCPHandler source, TimezoneUpdate packets are only emitted on the input() table function path, so the client handler is proven by the scripted `NativeConnectionTest.timezoneUpdatePacketsMoveTheDecodeContext`) |
+| SYSTEM (STOP/START MERGES, DROP MARK CACHE, FLUSH LOGS) | `KeywordSurfaceIT.systemStatementsExecute`, `ListenersIT.queryIdsReachTheServerQueryLog` |
+| KILL QUERY | `ProductionFlowsIT.killQueryFromAnotherConnectionIsTypedAndTheVictimSurvives` |
+| GRANT, CREATE USER | exercised as fixtures in `ProductionFlowsIT.readonlyUsersGetTypedRefusalsAndKeepTheirConnection` |
+| SHOW/DESCRIBE/EXPLAIN/ALTER/lightweight DELETE through JDBC | `JdbcIT.statementKindsFlowThroughJdbc` |
+
+| Production flow | Covered by |
+| --- | --- |
+| Query killed from another connection; victim survives | `ProductionFlowsIT.killQueryFromAnotherConnectionIsTypedAndTheVictimSurvives` (code 394, READY, reuse) |
+| Readonly user: reads work, writes and DDL refuse with code 164 under full grants, connection survives | `ProductionFlowsIT.readonlyUsersGetTypedRefusalsAndKeepTheirConnection` |
+| Server side max_execution_time kill; typed 159, RETRY_ONLY_IF_IDEMPOTENT, reuse | `ProductionFlowsIT.serverSideExecutionTimeoutsAreTypedAndTheConnectionSurvives` |
+| Schema evolution visible to already open pooled connections | `ProductionFlowsIT.schemaEvolutionIsVisibleToAlreadyOpenPooledConnections` |
+| Session settings persist across queries on one connection, not across connections | `ProductionFlowsIT.sessionSettingsPersistAcrossQueriesOnOneConnection` |
+| Restart under pool load, TLS teardown, cancels, deadlines, failover | earlier register rows (see above) |
+
 ## Recommended burn down order
 
 1. P0-1 to P0-10: DONE (see the P0 table above; found and fixed the sparse IP defaults bug).
