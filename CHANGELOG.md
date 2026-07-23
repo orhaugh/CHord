@@ -8,6 +8,14 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ### Added
 
+- A comparative benchmark against the official Java HTTP client
+  (`HttpComparisonBenchmark`): both stacks against the same containerised server with LZ4
+  in both directions, across a million row streaming SELECT, a hundred thousand row insert
+  into a Null engine table, and point query latency. Preliminary laptop numbers and the
+  honesty rules around them are in docs/performance.md: streaming reads run at roughly 2.5x
+  to 3x the HTTP client's throughput, inserts carry a modest consistent edge, and latency
+  needs a rigorous environment before any claim.
+
 - A statement kind and production flow test matrix (docs/test-coverage-audit.md): at least
   one test per ClickHouse statement kind the client carries, covering the DDL lifecycle
   including DETACH/ATTACH, EXCHANGE and CHECK TABLE, introspection (SHOW, DESCRIBE, EXISTS),

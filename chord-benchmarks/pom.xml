@@ -51,6 +51,20 @@
       <artifactId>chord-codec</artifactId>
     </dependency>
     <dependency>
+      <groupId>io.github.orhaugh</groupId>
+      <artifactId>chord-client</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.github.orhaugh</groupId>
+      <artifactId>chord-testkit</artifactId>
+    </dependency>
+    <!-- The official HTTP client, the comparison baseline for the wire level benchmarks. -->
+    <dependency>
+      <groupId>com.clickhouse</groupId>
+      <artifactId>client-v2</artifactId>
+      <version>0.9.8</version>
+    </dependency>
+    <dependency>
       <groupId>org.openjdk.jmh</groupId>
       <artifactId>jmh-core</artifactId>
     </dependency>
@@ -148,6 +162,10 @@
                     <argument>200ms</argument>
                     <argument>-r</argument>
                     <argument>200ms</argument>
+                    <!-- The HTTP comparison needs Docker and real seconds; run it
+                         explicitly: java -jar target/chord-benchmarks.jar HttpComparison -->
+                    <argument>-e</argument>
+                    <argument>HttpComparison</argument>
                   </arguments>
                 </configuration>
               </execution>
