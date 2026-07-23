@@ -101,7 +101,12 @@ public final class ChordDriver implements Driver {
       builder.password(password);
     }
     if (Boolean.parseBoolean(parsed.parameter("ssl", "false"))) {
-      builder.tls(TlsOptions.builder().build());
+      builder.tls(tlsOptions(parsed));
+    } else if (!parsed.parameter("ssl_ca", "").isEmpty()
+        || !parsed.parameter("ssl_truststore", "").isEmpty()) {
+      throw new SQLException(
+          "ssl_ca and ssl_truststore require ssl=true; they configure the TLS trust material",
+          "08001");
     }
     if (Boolean.parseBoolean(parsed.parameter("allow_plaintext_password", "false"))) {
       builder.allowPlaintextPassword(true);
@@ -122,6 +127,35 @@ public final class ChordDriver implements Driver {
     builder.connectTimeout(millis(parsed, "connect_timeout_ms", Duration.ofSeconds(10)));
     builder.readTimeout(millis(parsed, "read_timeout_ms", Duration.ZERO));
     return builder.build();
+  }
+
+  /**
+   * Builds trust material from the URL: {@code ssl_ca} names a PEM certificate bundle for a private
+   * authority, {@code ssl_truststore} with optional {@code ssl_truststore_password} names a JKS or
+   * PKCS#12 store, and with neither the JVM's system trust applies. The two forms are mutually
+   * exclusive.
+   */
+  private static TlsOptions tlsOptions(JdbcUrl parsed) throws SQLException {
+    String caPem = parsed.parameter("ssl_ca", "");
+    String trustStore = parsed.parameter("ssl_truststore", "");
+    String trustStorePassword = parsed.parameter("ssl_truststore_password", "");
+    if (!caPem.isEmpty() && !trustStore.isEmpty()) {
+      throw new SQLException(
+          "ssl_ca and ssl_truststore are mutually exclusive; configure one trust source", "08001");
+    }
+    try {
+      if (!caPem.isEmpty()) {
+        return TlsOptions.builder().trustedCertificates(java.nio.file.Path.of(caPem)).build();
+      }
+      if (!trustStore.isEmpty()) {
+        return TlsOptions.builder()
+            .trustStore(java.nio.file.Path.of(trustStore), trustStorePassword.toCharArray())
+            .build();
+      }
+      return TlsOptions.systemTrust();
+    } catch (io.github.orhaugh.chord.ChordConfigurationException e) {
+      throw new SQLException("Invalid TLS configuration: " + e.getMessage(), "08001", e);
+    }
   }
 
   private static Duration statementTimeout(JdbcUrl parsed) throws SQLException {
@@ -148,6 +182,9 @@ public final class ChordDriver implements Driver {
       "user",
       "password",
       "ssl",
+      "ssl_ca",
+      "ssl_truststore",
+      "ssl_truststore_password",
       "compression",
       "connect_timeout_ms",
       "read_timeout_ms",
