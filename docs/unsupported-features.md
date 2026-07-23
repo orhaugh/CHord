@@ -40,7 +40,6 @@ abandoned streams. What remains from the Phase 3 scope:
 | Batch sizing by rows and estimated bytes, flush thresholds, backpressure helpers | Callers currently control block boundaries directly |
 | Explicit deduplication tokens | `insert_deduplication_token` can already be passed as a setting; a typed API arrives with retry classification in Phase 5 |
 | Iterable object mapping onto inserts | Row object convenience per ADR-0005 |
-| `input(...)` based streaming | |
 
 ## Phase 4 remainder: compression conveniences
 

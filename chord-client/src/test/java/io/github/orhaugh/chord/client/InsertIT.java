@@ -401,4 +401,49 @@ class InsertIT {
       assertThat(count(writer, table)).isEqualTo(1000);
     }
   }
+
+  @org.junit.jupiter.api.Test
+  void inputTableFunctionStreamsClientDataThroughAServerSideTransform() {
+    // INSERT ... SELECT ... FROM input(...): the server sends the input() structure as the
+    // insert schema and transforms the streamed rows before writing, the native protocol's
+    // mechanism for server side reshaping of client data.
+    try (NativeConnection connection = connect()) {
+      String table = createTable(connection, "doubled UInt64, upper String");
+      try (InsertStream insert =
+          connection.insert(
+              QueryRequest.of(
+                  "INSERT INTO "
+                      + table
+                      + " SELECT n * 2, upper(s) FROM input('n UInt64, s String')"
+                      + " FORMAT Native"))) {
+        // The schema the server sent is the input() structure, not the table's.
+        assertThat(insert.schema().columnName(0)).isEqualTo("n");
+        assertThat(insert.schema().columnName(1)).isEqualTo("s");
+        io.github.orhaugh.chord.codec.column.BlockBuilder builder = insert.newBlock();
+        builder.addRow(java.math.BigInteger.valueOf(21), "hello");
+        builder.addRow(java.math.BigInteger.valueOf(50), "world");
+        insert.send(builder.build());
+        InsertStream.InsertSummary summary = insert.finish();
+        assertThat(summary.rowsSent()).isEqualTo(2);
+      }
+      try (QueryResult result =
+          connection.query(
+              QueryRequest.of("SELECT doubled, upper FROM " + table + " ORDER BY doubled"))) {
+        io.github.orhaugh.chord.codec.block.Block block = result.nextBlock().orElseThrow();
+        assertThat(
+                ((io.github.orhaugh.chord.codec.column.Columns.UInt64Column) block.column(0))
+                    .rawLongAt(0))
+            .isEqualTo(42);
+        assertThat(block.column(1).objectAt(0)).isEqualTo("HELLO");
+        assertThat(
+                ((io.github.orhaugh.chord.codec.column.Columns.UInt64Column) block.column(0))
+                    .rawLongAt(1))
+            .isEqualTo(100);
+        assertThat(block.column(1).objectAt(1)).isEqualTo("WORLD");
+        while (result.nextBlock().isPresent()) {
+          // Drain.
+        }
+      }
+    }
+  }
 }
