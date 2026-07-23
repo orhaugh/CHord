@@ -46,6 +46,37 @@ Reproduce with:
 java -jar chord-benchmarks/target/chord-benchmarks.jar HttpComparison -wi 4 -i 12 -r 3s -w 3s -gc true
 ```
 
+## Preliminary: ClickHouse Cloud over the public internet
+
+The same benchmark against a ClickHouse Cloud development instance (ap-south-1) from the
+same laptop, TLS both stacks (native 9440 with system trust, https 8443), LZ4 both
+directions, roughly 225ms round trip. All writes isolated in a scratch database created and
+dropped by the harness. Config via `-Dchord.bench.config` (see the benchmark javadoc).
+
+| Shape | CHord | client-v2 | Reading |
+|---|---|---|---|
+| Point query latency (same run) | 178.4 ms +-7.7 | 233.1 ms +-28.5 | CHord ~55 ms faster per request, non overlapping intervals |
+| SELECT 1M rows (paired window) | 0.331 ops/s +-0.280 | 0.288 ops/s +-0.104 | indistinguishable; the path is the bottleneck |
+| INSERT 100k rows (same run) | 0.480 ops/s +-0.135 | 0.592 ops/s +-0.179 | overlapping intervals; roughly par |
+
+Findings, in order of confidence:
+
+- The latency win is real and reproducible: a warm native TCP connection answers point
+  queries roughly 24% faster than the HTTP client at WAN distance, with non overlapping
+  confidence intervals measured in the same run. Per request HTTP overhead is a per query
+  tax that the persistent native connection does not pay.
+- WAN throughput is a property of the path, not the client. The same CHord benchmark
+  measured 0.043 ops/s in one window and 0.332 ops/s an hour later; within any single
+  window the two clients are statistically indistinguishable. Cross window comparisons over
+  the public internet are meaningless, which is why the initial full run (which measured
+  benchmarks minutes apart) briefly made the HTTP client look 5x faster at streaming.
+- Socket buffer sizing is not a factor: forcing 4 MiB receive and send buffers moved CHord
+  throughput from 0.332 to 0.330 ops/s. The OS default autotuning already does its job.
+
+Cloud throughput claims need a runner co located with the instance (same region, ideally
+same availability zone); that is the next environment on the list, and it doubles as the
+baseline grade Linux environment the local section is waiting for.
+
 ## Running the benchmarks
 
 ```bash

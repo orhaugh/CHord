@@ -141,6 +141,20 @@ public class HttpComparisonBenchmark {
       tls = Boolean.parseBoolean(config.getProperty("tls", "true"));
     }
 
+    // Optional experiment knob: socket buffer sizes for high bandwidth delay paths.
+    int socketBuffer = Integer.getInteger("chord.bench.socketBuffer", 0);
+    io.github.orhaugh.chord.transport.TransportOptions transport =
+        io.github.orhaugh.chord.transport.TransportOptions.DEFAULTS;
+    if (socketBuffer > 0) {
+      transport =
+          new io.github.orhaugh.chord.transport.TransportOptions(
+              transport.connectTimeout(),
+              transport.readTimeout(),
+              transport.tcpNoDelay(),
+              transport.keepAlive(),
+              socketBuffer,
+              socketBuffer);
+    }
     ConnectionOptions.Builder chordOptions =
         ConnectionOptions.builder()
             .host(host)
@@ -148,6 +162,7 @@ public class HttpComparisonBenchmark {
             .database(database)
             .username(user)
             .password(password)
+            .transportOptions(transport)
             .compression(Compression.LZ4);
     if (tls) {
       chordOptions.tls(io.github.orhaugh.chord.transport.TlsOptions.systemTrust());

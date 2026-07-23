@@ -14,7 +14,13 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
   into a Null engine table, and point query latency. Preliminary laptop numbers and the
   honesty rules around them are in docs/performance.md: streaming reads run at roughly 2.5x
   to 3x the HTTP client's throughput, inserts carry a modest consistent edge, and latency
-  needs a rigorous environment before any claim.
+  needs a rigorous environment before any claim. The benchmark also points at remote
+  servers (`-Dchord.bench.config`), isolating every write in a scratch database it creates,
+  guards and drops. Against ClickHouse Cloud over the public internet, the persistent
+  native connection answers point queries roughly 24% faster than the HTTP client with non
+  overlapping confidence intervals, while WAN streaming throughput is path bound and
+  indistinguishable between the stacks; details and the cross window trap are documented in
+  docs/performance.md.
 
 - A statement kind and production flow test matrix (docs/test-coverage-audit.md): at least
   one test per ClickHouse statement kind the client carries, covering the DDL lifecycle
