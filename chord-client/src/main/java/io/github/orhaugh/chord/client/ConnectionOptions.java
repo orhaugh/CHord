@@ -50,6 +50,8 @@ public final class ConnectionOptions {
   private final char[] password;
   private final String clientName;
   private final String quotaKey;
+  private final ChordOperationListener operationListener;
+  private final java.util.function.Supplier<ChordCredentials> credentialSupplier;
   private final long advertisedRevision;
   private final boolean allowPlaintextPassword;
   private final WireLimits wireLimits;
@@ -69,6 +71,8 @@ public final class ConnectionOptions {
     this.password = builder.password.clone();
     this.clientName = builder.clientName;
     this.quotaKey = builder.quotaKey;
+    this.operationListener = builder.operationListener;
+    this.credentialSupplier = builder.credentialSupplier;
     this.advertisedRevision = builder.advertisedRevision;
     this.allowPlaintextPassword = builder.allowPlaintextPassword;
     this.wireLimits = builder.wireLimits;
@@ -89,6 +93,8 @@ public final class ConnectionOptions {
     this.password = source.password.clone();
     this.clientName = source.clientName;
     this.quotaKey = source.quotaKey;
+    this.operationListener = source.operationListener;
+    this.credentialSupplier = source.credentialSupplier;
     this.advertisedRevision = source.advertisedRevision;
     this.allowPlaintextPassword = source.allowPlaintextPassword;
     this.wireLimits = source.wireLimits;
@@ -197,6 +203,32 @@ public final class ConnectionOptions {
    */
   public String quotaKey() {
     return quotaKey;
+  }
+
+  /**
+   * Returns the operation listener notified as connects, queries and inserts conclude.
+   *
+   * @return the listener, {@link ChordOperationListener#NOOP} when none is configured
+   */
+  public ChordOperationListener operationListener() {
+    return operationListener;
+  }
+
+  /**
+   * Resolves the credentials for a new connection: the configured supplier when present (so rotated
+   * passwords apply to every fresh connection), the static username and password otherwise.
+   *
+   * @return the credentials to authenticate the next connection with
+   */
+  public ChordCredentials resolveCredentials() {
+    if (credentialSupplier == null) {
+      return ChordCredentials.of(username, password);
+    }
+    ChordCredentials resolved = credentialSupplier.get();
+    if (resolved == null) {
+      throw new ChordConfigurationException("The credential supplier returned null");
+    }
+    return resolved;
   }
 
   /**
@@ -312,6 +344,8 @@ public final class ConnectionOptions {
     private char[] password = new char[0];
     private String clientName = "CHord Java";
     private String quotaKey = "";
+    private ChordOperationListener operationListener = ChordOperationListener.NOOP;
+    private java.util.function.Supplier<ChordCredentials> credentialSupplier;
     private long advertisedRevision = ProtocolRevisions.CURRENT;
     private boolean allowPlaintextPassword;
     private WireLimits wireLimits = WireLimits.DEFAULTS;
@@ -431,6 +465,32 @@ public final class ConnectionOptions {
      */
     public Builder quotaKey(String quotaKey) {
       this.quotaKey = Objects.requireNonNull(quotaKey, "quotaKey");
+      return this;
+    }
+
+    /**
+     * Registers a listener notified as connects, queries and inserts conclude, at the same points
+     * where the JFR events commit. Used by metrics facades; see {@link ChordOperationListener}.
+     *
+     * @param listener the listener
+     * @return this builder
+     */
+    public Builder operationListener(ChordOperationListener listener) {
+      this.operationListener = Objects.requireNonNull(listener, "listener");
+      return this;
+    }
+
+    /**
+     * Supplies credentials at connection time instead of statically. The supplier is invoked once
+     * per new connection, so pools and failover connectors pick up rotated passwords naturally. It
+     * must be fast and thread safe; the plaintext password protection applies to the resolved
+     * password exactly as to a static one.
+     *
+     * @param supplier resolves the credentials for each new connection
+     * @return this builder
+     */
+    public Builder credentials(java.util.function.Supplier<ChordCredentials> supplier) {
+      this.credentialSupplier = Objects.requireNonNull(supplier, "supplier");
       return this;
     }
 

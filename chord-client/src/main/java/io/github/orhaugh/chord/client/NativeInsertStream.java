@@ -73,6 +73,8 @@ final class NativeInsertStream implements InsertStream {
     readSchema();
   }
 
+  private final long startNanos = System.nanoTime();
+
   /** Concludes the JFR event exactly once, with final send counters. */
   private void commitJfr(String outcome) {
     if (jfrCommitted) {
@@ -83,6 +85,12 @@ final class NativeInsertStream implements InsertStream {
     jfrEvent.blocksSent = blocksSent;
     jfrEvent.outcome = outcome;
     jfrEvent.commit();
+    long rows = rowsSent;
+    NativeConnection.notifyOperationListener(
+        connection.options(),
+        listener ->
+            listener.insertFinished(
+                outcome, java.time.Duration.ofNanos(System.nanoTime() - startNanos), rows));
   }
 
   /**

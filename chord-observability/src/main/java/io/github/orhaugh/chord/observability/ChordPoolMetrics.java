@@ -65,5 +65,39 @@ public final class ChordPoolMetrics {
         .tags(tags)
         .description("Pooled connections resting in the pool")
         .register(registry);
+    io.micrometer.core.instrument.FunctionCounter.builder(
+            "chord.pool.acquires", pool, p -> p.stats().acquires())
+        .tags(tags)
+        .description("Leases handed out")
+        .register(registry);
+    io.micrometer.core.instrument.FunctionCounter.builder(
+            "chord.pool.acquire.timeouts", pool, p -> p.stats().acquireTimeouts())
+        .tags(tags)
+        .description("Acquire attempts that timed out or were interrupted")
+        .register(registry);
+    io.micrometer.core.instrument.FunctionCounter.builder(
+            "chord.pool.connections.opened", pool, p -> p.stats().connectionsOpened())
+        .tags(tags)
+        .description("Connections opened by borrows and warm up")
+        .register(registry);
+    io.micrometer.core.instrument.FunctionCounter.builder(
+            "chord.pool.connections.discarded", pool, p -> p.stats().connectionsDiscarded())
+        .tags(tags)
+        .description("Connections closed by the pool")
+        .register(registry);
+    io.micrometer.core.instrument.FunctionCounter.builder(
+            "chord.pool.leaks", pool, p -> p.stats().leaksDetected())
+        .tags(tags)
+        .description("Leases reported as leaked")
+        .register(registry);
+    io.micrometer.core.instrument.FunctionTimer.builder(
+            "chord.pool.acquire.wait",
+            pool,
+            p -> p.stats().acquires() + p.stats().acquireTimeouts(),
+            p -> p.stats().acquireWaitNanos(),
+            java.util.concurrent.TimeUnit.NANOSECONDS)
+        .tags(tags)
+        .description("Time spent waiting for a pool permit")
+        .register(registry);
   }
 }

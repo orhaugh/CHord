@@ -58,6 +58,16 @@
   </Match>
 
   <!--
+    The operation listener is a shared callback by design: options hand the configured
+    listener to the connection machinery, exactly as documented.
+  -->
+  <Match>
+    <Class name="io.github.orhaugh.chord.client.ConnectionOptions"/>
+    <Method name="operationListener"/>
+    <Bug pattern="EI_EXPOSE_REP"/>
+  </Match>
+
+  <!--
     JFR event fields are written by CHord and read reflectively by the Flight
     Recorder runtime, so static analysis sees them as unread.
   -->

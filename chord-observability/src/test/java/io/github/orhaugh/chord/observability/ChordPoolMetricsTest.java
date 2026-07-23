@@ -83,6 +83,14 @@ class ChordPoolMetricsTest {
         second.close();
         assertThat(activeGauge(registry, "load")).isEqualTo(0.0);
         assertThat(idleGauge(registry, "load")).isEqualTo(2.0);
+
+        // The lifetime counters and the wait timer moved with the traffic.
+        assertThat(counter(registry, "chord.pool.acquires", "load")).isEqualTo(2.0);
+        assertThat(counter(registry, "chord.pool.connections.opened", "load")).isEqualTo(2.0);
+        assertThat(counter(registry, "chord.pool.acquire.timeouts", "load")).isZero();
+        assertThat(
+                registry.get("chord.pool.acquire.wait").tag("pool", "load").functionTimer().count())
+            .isEqualTo(2.0);
       }
       // A closed pool's meters stay readable and report its drained state.
       assertThat(activeGauge(registry, "load")).isEqualTo(0.0);
@@ -135,6 +143,10 @@ class ChordPoolMetricsTest {
 
   private static double idleGauge(MeterRegistry registry, String pool) {
     return registry.get("chord.pool.connections.idle").tag("pool", pool).gauge().value();
+  }
+
+  private static double counter(MeterRegistry registry, String name, String pool) {
+    return registry.get(name).tag("pool", pool).functionCounter().count();
   }
 
   /**

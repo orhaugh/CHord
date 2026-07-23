@@ -182,6 +182,136 @@ class NativeConnectionTest {
   }
 
   @Test
+  void credentialSuppliersResolvePerConnection() {
+    var counter = new java.util.concurrent.atomic.AtomicInteger();
+    ConnectionOptions options =
+        ConnectionOptions.builder()
+            .host("scripted")
+            .credentials(
+                () -> ChordCredentials.of("user-" + counter.incrementAndGet(), new char[0]))
+            .build();
+
+    for (int round = 1; round <= 2; round++) {
+      int expected = round;
+      ScriptedTransport transport =
+          new ScriptedTransport(script(NativeConnectionTest::writeServerHello));
+      try (NativeConnection connection = NativeConnection.open(options, transport)) {
+        assertThat(connection.state()).isEqualTo(ConnectionState.READY);
+      }
+      // The rotated username travelled in this connection's ClientHello.
+      byte[] expectedHello =
+          script(
+              w ->
+                  HelloCodec.writeClientHello(
+                      w,
+                      new ClientHello(
+                          "CHord Java",
+                          NativeConnection.CLIENT_VERSION_MAJOR,
+                          NativeConnection.CLIENT_VERSION_MINOR,
+                          ProtocolRevisions.CURRENT,
+                          "",
+                          "user-" + expected),
+                      new char[0]));
+      assertThat(java.util.Arrays.copyOf(transport.clientBytes(), expectedHello.length))
+          .isEqualTo(expectedHello);
+    }
+    assertThat(counter.get()).isEqualTo(2);
+
+    // The plaintext protection applies to supplier resolved passwords exactly as to static
+    // ones: a password over an insecure transport without the opt in is refused.
+    ConnectionOptions withPassword =
+        ConnectionOptions.builder()
+            .host("scripted")
+            .credentials(() -> ChordCredentials.of("app", "secret".toCharArray()))
+            .build();
+    assertThatThrownBy(
+            () ->
+                NativeConnection.open(
+                    withPassword,
+                    new ScriptedTransport(script(NativeConnectionTest::writeServerHello))))
+        .isInstanceOf(ChordConfigurationException.class)
+        .hasMessageContaining("plaintext");
+  }
+
+  @Test
+  void operationListenersObserveConnectQueryAndInsert() {
+    var connects = new java.util.concurrent.atomic.AtomicInteger();
+    var queries = new java.util.concurrent.CopyOnWriteArrayList<String>();
+    var inserts = new java.util.concurrent.CopyOnWriteArrayList<String>();
+    ChordOperationListener listener =
+        new ChordOperationListener() {
+          @Override
+          public void connectFinished(boolean succeeded, java.time.Duration duration) {
+            if (succeeded && !duration.isNegative()) {
+              connects.incrementAndGet();
+            }
+          }
+
+          @Override
+          public void queryFinished(String outcome, java.time.Duration duration, long rowsRead) {
+            queries.add(outcome);
+          }
+
+          @Override
+          public void insertFinished(String outcome, java.time.Duration duration, long rowsSent) {
+            inserts.add(outcome + ":" + rowsSent);
+          }
+        };
+    ConnectionOptions options =
+        ConnectionOptions.builder().host("scripted").operationListener(listener).build();
+
+    ScriptedTransport queryTransport =
+        new ScriptedTransport(
+            script(
+                w -> {
+                  writeServerHello(w);
+                  w.writeVarUInt(1); // Server::Data: header
+                  w.writeString("");
+                  io.github.orhaugh.chord.codec.block.BlockWriter.write(
+                      w,
+                      io.github.orhaugh.chord.codec.column.BlockBuilder.forSchema(
+                              decodeSchema("n", "UInt8"))
+                          .build(),
+                      SERVER_REVISION);
+                  w.writeVarUInt(5); // EndOfStream
+                }));
+    try (NativeConnection connection = NativeConnection.open(options, queryTransport)) {
+      try (QueryResult result = connection.query(QueryRequest.of("SELECT n"))) {
+        while (result.nextBlock().isPresent()) {
+          // Drain.
+        }
+      }
+    }
+    assertThat(connects.get()).isEqualTo(1);
+    assertThat(queries).containsExactly("finished");
+
+    ScriptedTransport insertTransport =
+        new ScriptedTransport(
+            script(
+                w -> {
+                  writeServerHello(w);
+                  w.writeVarUInt(1); // Server::Data: the insert schema
+                  w.writeString("");
+                  io.github.orhaugh.chord.codec.block.BlockWriter.write(
+                      w,
+                      io.github.orhaugh.chord.codec.column.BlockBuilder.forSchema(
+                              decodeSchema("n", "UInt64"))
+                          .build(),
+                      SERVER_REVISION);
+                  w.writeVarUInt(5); // EndOfStream
+                }));
+    try (NativeConnection connection = NativeConnection.open(options, insertTransport)) {
+      InsertStream insert = connection.insert(QueryRequest.of("INSERT INTO t VALUES"));
+      io.github.orhaugh.chord.codec.column.BlockBuilder builder = insert.newBlock();
+      builder.addRow(java.math.BigInteger.ONE);
+      insert.send(builder.build());
+      insert.finish();
+    }
+    assertThat(connects.get()).isEqualTo(2);
+    assertThat(inserts).containsExactly("committed:1");
+  }
+
+  @Test
   void insertExchangesDispatchProgressPacketsToListeners() {
     // Real servers do not send Progress for client fed inserts (verified against 25.8), but
     // the protocol allows it, so the dispatch and accumulation paths are proven here.

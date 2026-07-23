@@ -73,6 +73,8 @@ final class NativeQueryResult implements QueryResult {
   private final JfrEvents.QueryEvent jfrEvent = new JfrEvents.QueryEvent();
   private boolean jfrCommitted;
 
+  private final long startNanos = System.nanoTime();
+
   NativeQueryResult(NativeConnection connection, WireReader in, QueryRequest request) {
     this.connection = connection;
     this.in = in;
@@ -299,6 +301,12 @@ final class NativeQueryResult implements QueryResult {
     jfrEvent.bytesRead = progressReadBytes;
     jfrEvent.outcome = outcome;
     jfrEvent.commit();
+    long rows = progressReadRows;
+    NativeConnection.notifyOperationListener(
+        connection.options(),
+        listener ->
+            listener.queryFinished(
+                outcome, java.time.Duration.ofNanos(System.nanoTime() - startNanos), rows));
   }
 
   /**

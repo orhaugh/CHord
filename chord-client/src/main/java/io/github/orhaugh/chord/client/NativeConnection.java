@@ -144,7 +144,10 @@ public final class NativeConnection implements AutoCloseable {
             TlsTransport.connect(
                 options.host(), options.port(), options.transportOptions(), options.tls().get());
       } else {
-        requirePlaintextPasswordOptIn(options, false);
+        // Fail fast for a statically configured password before dialling; supplier resolved
+        // credentials are checked in the handshake, still before any hello bytes travel.
+        requirePlaintextPasswordOptIn(
+            options, ChordCredentials.of(options.username(), options.passwordChars()), false);
         transport =
             TcpTransport.connect(options.host(), options.port(), options.transportOptions());
       }
@@ -167,6 +170,7 @@ public final class NativeConnection implements AutoCloseable {
     event.host = options.host();
     event.port = options.port();
     event.secure = transport.isSecure();
+    long startNanos = System.nanoTime();
     try {
       NativeConnection connection = handshake(options, transport);
       event.negotiatedRevision = connection.negotiatedRevision();
@@ -174,15 +178,35 @@ public final class NativeConnection implements AutoCloseable {
       return connection;
     } finally {
       event.commit();
+      notifyOperationListener(
+          options,
+          listener ->
+              listener.connectFinished(
+                  event.succeeded, java.time.Duration.ofNanos(System.nanoTime() - startNanos)));
+    }
+  }
+
+  /** Notifies the configured operation listener; a throwing listener never disturbs callers. */
+  static void notifyOperationListener(
+      ConnectionOptions options, java.util.function.Consumer<ChordOperationListener> callback) {
+    ChordOperationListener listener = options.operationListener();
+    if (listener == ChordOperationListener.NOOP) {
+      return;
+    }
+    try {
+      callback.accept(listener);
+    } catch (RuntimeException e) {
+      LOG.warn("operation listener failed", e);
     }
   }
 
   private static NativeConnection handshake(ConnectionOptions options, NativeTransport transport) {
     long id = IDS.incrementAndGet();
     ConnectionStateMachine state = new ConnectionStateMachine();
-    char[] password = options.passwordChars();
+    ChordCredentials credentials = options.resolveCredentials();
+    char[] password = credentials.passwordChars();
     try {
-      requirePlaintextPasswordOptIn(options, transport.isSecure());
+      requirePlaintextPasswordOptIn(options, credentials, transport.isSecure());
       state.transitionTo(ConnectionState.HANDSHAKING);
       WireWriter out = new WireWriter(transport.outputStream());
       WireReader in = new WireReader(transport.inputStream(), options.wireLimits());
@@ -194,7 +218,7 @@ public final class NativeConnection implements AutoCloseable {
               CLIENT_VERSION_MINOR,
               options.advertisedRevision(),
               options.database(),
-              options.username());
+              credentials.username());
       HelloCodec.writeClientHello(out, clientHello, password);
       out.flush();
 
@@ -276,8 +300,9 @@ public final class NativeConnection implements AutoCloseable {
    * The ClickHouse native protocol sends passwords verbatim inside the handshake, so a non empty
    * password over a plaintext transport is refused unless explicitly permitted.
    */
-  private static void requirePlaintextPasswordOptIn(ConnectionOptions options, boolean secure) {
-    if (options.hasPassword() && !secure && !options.allowPlaintextPassword()) {
+  private static void requirePlaintextPasswordOptIn(
+      ConnectionOptions options, ChordCredentials credentials, boolean secure) {
+    if (credentials.hasPassword() && !secure && !options.allowPlaintextPassword()) {
       throw new ChordConfigurationException(
           "Refusing to send a password over a plaintext connection. Use TLS, or explicitly opt"
               + " in with allowPlaintextPassword(true) if this network is secured by other"
@@ -531,6 +556,10 @@ public final class NativeConnection implements AutoCloseable {
   }
 
   /** Returns the current session timezone, as updated by TimezoneUpdate packets. */
+  ConnectionOptions options() {
+    return options;
+  }
+
   ZoneId sessionTimezone() {
     return sessionTimezone;
   }
