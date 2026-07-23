@@ -6,26 +6,6 @@ versioning once 1.0.0 is released; before that, any 0.x release may change the A
 
 ## [Unreleased]
 
-### Fixed
-
-- A corrupt or hostile timezone name inside a wire type declaration (for example
-  `DateTime64(6, '...')` in a block header) escaped as a raw `java.time.DateTimeException`
-  instead of a typed decode failure, from the column reader and both datetime appenders.
-  Found by the new decoder fuzzer on its first run; malformed names now raise
-  `ChordTypeException` with the offending name quoted.
-
-### Added
-
-- The 1.0 gate test infrastructure: deterministic decoder mutation fuzzing seeded from the
-  golden vectors (scales with `-Dchord.fuzz.iterations`), a duration scaled soak suite with
-  permit leak and heap bound assertions (`-Dchord.soak.seconds`), server restart under
-  concurrent pool load, TLS teardown mid session, and executing benchmarks: chord-benchmarks
-  joined the reactor, gained a block codec benchmark for the decode and encode hot path, and
-  runs end to end under `-Pbench-smoke`. Every P2 hygiene row in the coverage audit is
-  closed (packet type tables, wire reader auxiliary surface, settings flags, transport
-  options, error code boundaries, geometry aliases, and randomised value round trips across
-  a 20 type pool).
-
 ## [0.1.0] - 2026-07-23
 
 First public release: the native TCP protocol client and its JDBC adapter, tested against
@@ -33,18 +13,28 @@ ClickHouse 25.8, 26.3 and 26.6.
 
 ### Added
 
-- Coverage for every P0 and P1 gap in the test coverage audit
-  (docs/test-coverage-audit.md), taking the suite to 416 executions swept across three
-  server versions. Burning down the P0s surfaced and fixed a real defect before release:
-  sparse IPv4 and IPv6 columns could not materialise because the default value registry
-  produced a string and a raw byte array where the column builders require address values.
-  Highlights: float special values and every integer, date, decimal and enum width at its
-  boundaries through codec, server and JDBC paths; abrupt connection loss at every protocol
-  phase with retry classification asserted; sparse materialisation across 22 type families;
-  hand built wire vectors for the LowCardinality, Variant, Dynamic and JSON guard branches;
-  TLS pinning; the full JDBC getter, setter, batch, metadata and SQLState matrices; JFR
-  event outcomes from real recordings; Micrometer gauges under live pool traffic; and a
-  differential check of decoded values against clickhouse-client output.
+- Coverage for every gap in the test coverage audit (docs/test-coverage-audit.md), P0
+  through P2, taking the suite to 443 executions swept across three server versions.
+  Burning the register down surfaced and fixed two real defects before release: sparse IPv4
+  and IPv6 columns could not materialise because the default value registry produced a
+  string and a raw byte array where the column builders require address values, and a
+  corrupt timezone name inside a wire type declaration escaped as a raw
+  `java.time.DateTimeException` instead of a typed decode failure (found by the decoder
+  fuzzer on its first run). Highlights: float special values and every integer, date,
+  decimal and enum width at its boundaries through codec, server and JDBC paths; abrupt
+  connection loss at every protocol phase with retry classification asserted; sparse
+  materialisation across 22 type families; hand built wire vectors for the LowCardinality,
+  Variant, Dynamic and JSON guard branches; TLS pinning; the full JDBC getter, setter,
+  batch, metadata and SQLState matrices; JFR event outcomes from real recordings;
+  Micrometer gauges under live pool traffic; and a differential check of decoded values
+  against clickhouse-client output.
+
+- The 1.0 gate test infrastructure: deterministic decoder mutation fuzzing seeded from the
+  golden vectors (scales with `-Dchord.fuzz.iterations`), a duration scaled soak suite with
+  permit leak and heap bound assertions (`-Dchord.soak.seconds`), server restart under
+  concurrent pool load, TLS teardown mid session, and executing benchmarks: chord-benchmarks
+  joined the reactor, gained a block codec benchmark for the decode and encode hot path, and
+  runs end to end under `-Pbench-smoke`.
 
 - Release readiness: `chord-bom` now lists every published module, including `chord-codec`,
   `chord-jdbc` and `chord-observability`, which shed their placeholder status in earlier
