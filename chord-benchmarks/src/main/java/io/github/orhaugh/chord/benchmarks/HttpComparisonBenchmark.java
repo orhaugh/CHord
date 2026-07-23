@@ -77,28 +77,71 @@ public class HttpComparisonBenchmark {
   private NativeConnection chord;
   private Client http;
 
-  /** Starts the shared server and both clients, and creates the insert sink. */
+  /**
+   * Starts both clients against either a local container (the default) or a remote server described
+   * by a properties file named in {@code -Dchord.bench.config=<path>} with keys {@code host},
+   * {@code nativePort}, {@code httpPort}, {@code user}, {@code password}, {@code database} and
+   * {@code tls} (true for ClickHouse Cloud: native 9440, https 8443). Keeping credentials in a file
+   * keeps them out of command lines and shell history.
+   *
+   * @throws Exception on startup failure
+   */
   @Setup(Level.Trial)
   public void start() throws Exception {
-    server = new ClickHouseServerContainer();
-    server.start();
-    chord =
-        NativeConnection.open(
-            ConnectionOptions.builder()
-                .host(server.getHost())
-                .port(server.nativePort())
-                .database(server.database())
-                .username(server.username())
-                .password(server.password())
-                .allowPlaintextPassword(true)
-                .compression(Compression.LZ4)
-                .build());
+    String configPath = System.getProperty("chord.bench.config", "");
+    final String host;
+    final int nativePort;
+    final int httpPort;
+    final String user;
+    final String password;
+    final String database;
+    final boolean tls;
+    if (configPath.isEmpty()) {
+      server = new ClickHouseServerContainer();
+      server.start();
+      host = server.getHost();
+      nativePort = server.nativePort();
+      httpPort = server.httpPort();
+      user = server.username();
+      password = server.password();
+      database = server.database();
+      tls = false;
+    } else {
+      java.util.Properties config = new java.util.Properties();
+      try (java.io.Reader reader =
+          java.nio.file.Files.newBufferedReader(java.nio.file.Path.of(configPath))) {
+        config.load(reader);
+      }
+      host = require(config, "host");
+      nativePort = Integer.parseInt(config.getProperty("nativePort", "9440"));
+      httpPort = Integer.parseInt(config.getProperty("httpPort", "8443"));
+      user = config.getProperty("user", "default");
+      password = require(config, "password");
+      database = config.getProperty("database", "default");
+      tls = Boolean.parseBoolean(config.getProperty("tls", "true"));
+    }
+
+    ConnectionOptions.Builder chordOptions =
+        ConnectionOptions.builder()
+            .host(host)
+            .port(nativePort)
+            .database(database)
+            .username(user)
+            .password(password)
+            .compression(Compression.LZ4);
+    if (tls) {
+      chordOptions.tls(io.github.orhaugh.chord.transport.TlsOptions.systemTrust());
+    } else {
+      chordOptions.allowPlaintextPassword(true);
+    }
+    chord = NativeConnection.open(chordOptions.build());
+
     http =
         new Client.Builder()
-            .addEndpoint("http://" + server.getHost() + ":" + server.httpPort())
-            .setUsername(server.username())
-            .setPassword(server.password())
-            .setDefaultDatabase(server.database())
+            .addEndpoint((tls ? "https://" : "http://") + host + ":" + httpPort)
+            .setUsername(user)
+            .setPassword(password)
+            .setDefaultDatabase(database)
             .compressServerResponse(true)
             .compressClientRequest(true)
             .build();
@@ -111,6 +154,15 @@ public class HttpComparisonBenchmark {
         // Drain.
       }
     }
+  }
+
+  private static String require(java.util.Properties config, String key) {
+    String value = config.getProperty(key);
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException(
+          "Missing \"" + key + "\" in the chord.bench.config properties file");
+    }
+    return value;
   }
 
   /** Stops both clients and the server. */
