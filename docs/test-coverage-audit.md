@@ -168,7 +168,9 @@ Documented, not tested
   a shared pool for the configured duration; asserts no unexpected failures, no wedged
   workers, zero leaked permits, server side row count equal to the client side count, and
   heap after collection back within 128 MiB of its baseline. Sixty second smoke green; an
-  hour or more is the release gate cadence.
+  hour or more is the release gate cadence; the two hour gate passed on a dedicated CI
+  runner on 2026-07-23 (the dispatchable soak.yml workflow), all leak, count and heap
+  assertions holding.
 - Benchmarks: `chord-benchmarks` joined the reactor (it previously never built with the
   project), gained `BlockCodecBenchmark` for the block decode and encode hot path alongside
   the VarInt codec, and executes under `-Pbench-smoke` (in process, minimal iterations) so
