@@ -1316,6 +1316,10 @@ public final class Columns {
       this.dynamicTypes = List.copyOf(dynamicTypes);
     }
 
+    VariantColumn variant() {
+      return variant;
+    }
+
     /**
      * Returns the concrete types this column's block declared, in global discriminator order and
      * excluding the shared variant.
@@ -1424,6 +1428,10 @@ public final class Columns {
       this.typedPaths = new LinkedHashMap<>(typedPaths);
       this.dynamicPaths = new LinkedHashMap<>(dynamicPaths);
       this.sharedData = sharedData;
+    }
+
+    MapColumn sharedData() {
+      return sharedData;
     }
 
     /**

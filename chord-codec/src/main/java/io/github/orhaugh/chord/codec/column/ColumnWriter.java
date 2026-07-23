@@ -225,6 +225,16 @@ public final class ColumnWriter {
           write(out, variant);
         }
       }
+      case Columns.DynamicColumn c -> write(out, c.variant());
+      case Columns.JsonColumn c -> {
+        for (Column typed : c.typedPaths().values()) {
+          write(out, typed);
+        }
+        for (Column dynamic : c.dynamicPaths().values()) {
+          write(out, dynamic);
+        }
+        write(out, c.sharedData());
+      }
       case Columns.LowCardinalityColumn c -> writeLowCardinality(out, c);
       default ->
           throw new UnsupportedClickHouseTypeException(
@@ -264,6 +274,28 @@ public final class ColumnWriter {
         for (Column variant : c.variants()) {
           writePrefix(out, variant);
         }
+      }
+      case Columns.DynamicColumn c -> {
+        out.writeInt64Le(2); // structure version V2
+        out.writeVarUInt(c.dynamicTypes().size());
+        for (io.github.orhaugh.chord.codec.type.ClickHouseType dynamicType : c.dynamicTypes()) {
+          out.writeString(dynamicType.name());
+        }
+        writePrefix(out, c.variant());
+      }
+      case Columns.JsonColumn c -> {
+        out.writeInt64Le(2); // object serialisation version V2
+        out.writeVarUInt(c.dynamicPaths().size());
+        for (String path : c.dynamicPaths().keySet()) {
+          out.writeString(path);
+        }
+        for (Column typed : c.typedPaths().values()) {
+          writePrefix(out, typed);
+        }
+        for (Column dynamic : c.dynamicPaths().values()) {
+          writePrefix(out, dynamic);
+        }
+        // The shared data serialises as Map(String, String), which has no prefix.
       }
       default -> {
         // Leaf types have no bulk state prefix.

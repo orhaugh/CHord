@@ -72,6 +72,61 @@ class TypeEdgeValuesTest {
   }
 
   @org.junit.jupiter.api.Test
+  void dynamicValuesRoundTripByDiscovery() {
+    java.util.UUID uuid = java.util.UUID.fromString("01234567-89ab-cdef-0123-456789abcdef");
+    Column column =
+        roundTripColumn(
+            "Dynamic",
+            42L,
+            "hello",
+            null,
+            2.5d,
+            true,
+            Instant.parse("2026-01-01T00:00:00.123456789Z"),
+            uuid,
+            LocalDate.of(2026, 7, 23),
+            -42L);
+    assertThat(column.objectAt(0)).isEqualTo(42L);
+    assertThat(column.objectAt(1)).isEqualTo("hello");
+    assertThat(column.objectAt(2)).isNull();
+    assertThat(column.objectAt(3)).isEqualTo(2.5d);
+    assertThat(column.objectAt(4)).isEqualTo(true);
+    assertThat(column.objectAt(5)).isEqualTo(Instant.parse("2026-01-01T00:00:00.123456789Z"));
+    assertThat(column.objectAt(6)).isEqualTo(uuid);
+    assertThat(column.objectAt(7)).isEqualTo(LocalDate.of(2026, 7, 23));
+    assertThat(column.objectAt(8)).isEqualTo(-42L);
+
+    assertThatThrownBy(() -> roundTripColumn("Dynamic", new Object()))
+        .hasMessageContaining("Cannot infer a Dynamic type");
+  }
+
+  @org.junit.jupiter.api.Test
+  void jsonValuesRoundTripAsPathMaps() {
+    Column column =
+        roundTripColumn(
+            "JSON",
+            java.util.Map.of("a", 42L, "b", java.util.Map.of("c", "nested")),
+            java.util.Map.of("a", 7L),
+            null,
+            java.util.Map.of("b", java.util.Map.of("c", "other"), "d", 2.5d));
+    @SuppressWarnings("unchecked")
+    java.util.Map<String, Object> first = (java.util.Map<String, Object>) column.objectAt(0);
+    assertThat(first).containsEntry("a", 42L).containsEntry("b.c", "nested");
+    @SuppressWarnings("unchecked")
+    java.util.Map<String, Object> second = (java.util.Map<String, Object>) column.objectAt(1);
+    assertThat(second).containsEntry("a", 7L).doesNotContainKey("b.c").doesNotContainKey("d");
+    @SuppressWarnings("unchecked")
+    java.util.Map<String, Object> third = (java.util.Map<String, Object>) column.objectAt(2);
+    assertThat(third).isEmpty();
+    @SuppressWarnings("unchecked")
+    java.util.Map<String, Object> fourth = (java.util.Map<String, Object>) column.objectAt(3);
+    assertThat(fourth).containsEntry("b.c", "other").containsEntry("d", 2.5d);
+
+    assertThatThrownBy(() -> roundTripColumn("JSON", "not a map"))
+        .hasMessageContaining("Cannot convert String to JSON");
+  }
+
+  @org.junit.jupiter.api.Test
   void timeAndTime64RoundTripTheirExtremes() {
     java.time.Duration max = java.time.Duration.ofSeconds(999L * 3600 + 59 * 60 + 59);
     Column time = roundTripColumn("Time", max, max.negated(), java.time.Duration.ZERO);

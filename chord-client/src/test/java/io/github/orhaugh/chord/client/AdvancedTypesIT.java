@@ -16,9 +16,7 @@
 package io.github.orhaugh.chord.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.github.orhaugh.chord.codec.UnsupportedClickHouseTypeException;
 import io.github.orhaugh.chord.codec.block.Block;
 import io.github.orhaugh.chord.codec.column.BlockBuilder;
 import io.github.orhaugh.chord.codec.column.Column;
@@ -140,6 +138,53 @@ class AdvancedTypesIT {
           seen += block.rows();
         }
         assertThat(seen).isEqualTo(5000);
+      }
+    }
+  }
+
+  @Test
+  void variantDynamicAndJsonWriteThroughNativeBlocks() {
+    try (NativeConnection connection = connect()) {
+      for (String setting :
+          java.util.List.of("allow_experimental_variant_type", "allow_experimental_dynamic_type")) {
+        try (QueryResult result = connection.query(QueryRequest.of("SET " + setting + " = 1"))) {
+          while (result.nextBlock().isPresent()) {
+            // Drain; unknown on newer servers where the types went stable is fine.
+          }
+        } catch (io.github.orhaugh.chord.ChordServerException e) {
+          // Setting removed after stabilisation; proceed.
+        }
+      }
+      execute(
+          connection,
+          "CREATE TABLE adv_writes (id UInt8, v Variant(Int64, String), d Dynamic, j JSON)"
+              + " ENGINE = Memory");
+      try (InsertStream insert =
+          connection.insert(QueryRequest.of("INSERT INTO adv_writes VALUES"))) {
+        io.github.orhaugh.chord.codec.column.BlockBuilder builder = insert.newBlock();
+        builder.addRow(1, 42L, "dynamic-string", java.util.Map.of("a", 1L, "b.c", "x"));
+        builder.addRow(2, "variant-string", 2.5d, java.util.Map.of("a", 2L));
+        builder.addRow(3, null, null, null);
+        insert.send(builder.build());
+        insert.finish();
+      }
+      // The server itself renders what it stored: definitive proof the wire bytes parsed.
+      try (QueryResult result =
+          connection.query(
+              QueryRequest.of(
+                  "SELECT toString(v), toString(d), toString(j) FROM adv_writes ORDER BY id"))) {
+        Block block = result.nextBlock().orElseThrow();
+        assertThat(block.column(0).objectAt(0)).isEqualTo("42");
+        assertThat(block.column(1).objectAt(0)).isEqualTo("dynamic-string");
+        // Dotted paths reconstruct as nested objects with typed values.
+        assertThat(block.column(2).objectAt(0)).isEqualTo("{\"a\":1,\"b\":{\"c\":\"x\"}}");
+        assertThat(block.column(0).objectAt(1)).isEqualTo("variant-string");
+        assertThat(block.column(1).objectAt(1)).isEqualTo("2.5");
+        assertThat(block.column(0).objectAt(2)).isEqualTo("\u1D3A\u1D41\u1D38\u1D38");
+        assertThat(block.column(2).objectAt(2)).isEqualTo("{}");
+        while (result.nextBlock().isPresent()) {
+          // Drain.
+        }
       }
     }
   }
@@ -376,23 +421,6 @@ class AdvancedTypesIT {
         Map<String, Object> second = (Map<String, Object>) column.objectAt(1);
         assertThat(second).containsEntry("price", 8L).containsEntry("nested.flag", true);
       }
-    }
-  }
-
-  @Test
-  void insertingIntoJsonColumnsFailsExplicitly() {
-    try (NativeConnection connection = connect()) {
-      execute(connection, "SET allow_experimental_json_type = 1");
-      execute(connection, "CREATE TABLE js_reject (j JSON) ENGINE = Memory");
-      assertThatThrownBy(
-              () -> {
-                try (InsertStream insert =
-                    connection.insert(QueryRequest.of("INSERT INTO js_reject VALUES"))) {
-                  insert.newBlock();
-                }
-              })
-          .isInstanceOf(UnsupportedClickHouseTypeException.class)
-          .hasMessageContaining("JSON");
     }
   }
 }

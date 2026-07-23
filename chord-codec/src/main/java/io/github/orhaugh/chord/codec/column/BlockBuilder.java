@@ -224,16 +224,8 @@ public final class BlockBuilder {
           throw new UnsupportedClickHouseTypeException("Cannot insert values of type Nothing");
       case ClickHouseType.LowCardinalityType t -> new LowCardinalityAppender(t);
       case ClickHouseType.VariantType t -> new VariantAppender(t);
-      case ClickHouseType.DynamicType t ->
-          throw new UnsupportedClickHouseTypeException(
-              "Building Dynamic values client side is not supported; write a concrete column type"
-                  + " instead: "
-                  + t.name());
-      case ClickHouseType.JsonType t ->
-          throw new UnsupportedClickHouseTypeException(
-              "Building JSON values client side is not supported; insert JSON text through a"
-                  + " String column with input format settings, or use HTTP formats: "
-                  + t.name());
+      case ClickHouseType.DynamicType t -> new DynamicAppender(t);
+      case ClickHouseType.JsonType t -> new JsonAppender(t);
       case ClickHouseType.AggregateFunctionType t ->
           throw new UnsupportedClickHouseTypeException(
               "AggregateFunction states cannot be built client side: " + t.name());
@@ -318,6 +310,241 @@ public final class BlockBuilder {
               type, Arrays.copyOf(discriminators, size), variants, Arrays.copyOf(positions, size));
       size = 0;
       Arrays.fill(counts, 0);
+      return built;
+    }
+  }
+
+  /**
+   * Builds Dynamic columns by discovering one concrete type per distinct Java shape: integers as
+   * Int64, strings, Float64, Bool, DateTime64(9) for instants, UUID and Date32. The shared variant
+   * is never used on the write side; discovering more types than a variant discriminator byte can
+   * address is refused.
+   */
+  private static final class DynamicAppender implements Appender {
+    /** Discriminators are bytes with 255 reserved for NULL and one slot for SharedVariant. */
+    private static final int MAX_DISCOVERED_TYPES = 254;
+
+    private final ClickHouseType.DynamicType type;
+    private final java.util.LinkedHashMap<String, Appender> discovered =
+        new java.util.LinkedHashMap<>();
+    private final java.util.LinkedHashMap<String, ClickHouseType> discoveredTypes =
+        new java.util.LinkedHashMap<>();
+    private final java.util.HashMap<String, Integer> counts = new java.util.HashMap<>();
+    private String[] rowTypes = new String[16];
+    private int[] positions = new int[16];
+    private int size;
+
+    DynamicAppender(ClickHouseType.DynamicType type) {
+      this.type = type;
+    }
+
+    @Override
+    public void append(Object value) {
+      if (size == rowTypes.length) {
+        rowTypes = Arrays.copyOf(rowTypes, size * 2);
+        positions = Arrays.copyOf(positions, size * 2);
+      }
+      if (value == null) {
+        rowTypes[size] = null;
+        positions[size] = 0;
+        size++;
+        return;
+      }
+      ClickHouseType inferred = infer(value);
+      String name = inferred.name();
+      Appender appender = discovered.get(name);
+      if (appender == null) {
+        if (discovered.size() == MAX_DISCOVERED_TYPES) {
+          throw new ChordTypeException(
+              "Dynamic column discovered more than "
+                  + MAX_DISCOVERED_TYPES
+                  + " distinct types; shred wide value sets into typed columns instead");
+        }
+        appender = appenderFor(inferred);
+        discovered.put(name, appender);
+        discoveredTypes.put(name, inferred);
+      }
+      appender.append(value);
+      int position = counts.merge(name, 1, Integer::sum) - 1;
+      rowTypes[size] = name;
+      positions[size] = position;
+      size++;
+    }
+
+    private static ClickHouseType infer(Object value) {
+      if (value instanceof Long
+          || value instanceof Integer
+          || value instanceof Short
+          || value instanceof Byte) {
+        return new ClickHouseType.IntegerType(64, true);
+      }
+      if (value instanceof BigInteger big) {
+        if (big.bitLength() > 63) {
+          throw new ChordTypeException(
+              "Cannot infer a Dynamic type for a BigInteger beyond Int64: " + big);
+        }
+        return new ClickHouseType.IntegerType(64, true);
+      }
+      if (value instanceof String) {
+        return new ClickHouseType.StringType();
+      }
+      if (value instanceof Double || value instanceof Float) {
+        return new ClickHouseType.FloatType(64);
+      }
+      if (value instanceof Boolean) {
+        return new ClickHouseType.BoolType();
+      }
+      if (value instanceof Instant) {
+        return new ClickHouseType.DateTime64Type(9, java.util.Optional.empty());
+      }
+      if (value instanceof UUID) {
+        return new ClickHouseType.UuidType();
+      }
+      if (value instanceof LocalDate) {
+        return new ClickHouseType.Date32Type();
+      }
+      throw new ChordTypeException(
+          "Cannot infer a Dynamic type for "
+              + value.getClass().getSimpleName()
+              + "; insert into a concrete column type instead");
+    }
+
+    @Override
+    public void appendDefault() {
+      append(null);
+    }
+
+    @Override
+    public Column finish() {
+      java.util.TreeMap<String, ClickHouseType> sorted = new java.util.TreeMap<>(discoveredTypes);
+      sorted.put("SharedVariant", new ClickHouseType.StringType());
+      java.util.List<String> order = new ArrayList<>(sorted.keySet());
+      java.util.Map<String, Integer> discriminatorOf = new java.util.HashMap<>();
+      for (int i = 0; i < order.size(); i++) {
+        discriminatorOf.put(order.get(i), i);
+      }
+      int sharedIndex = order.indexOf("SharedVariant");
+
+      List<Column> variants = new ArrayList<>(order.size());
+      for (String name : order) {
+        if (name.equals("SharedVariant")) {
+          variants.add(new StringAppender(new ClickHouseType.StringType()).finish());
+        } else {
+          variants.add(discovered.get(name).finish());
+        }
+      }
+      byte[] discriminators = new byte[size];
+      for (int i = 0; i < size; i++) {
+        discriminators[i] =
+            rowTypes[i] == null
+                ? (byte) Columns.VariantColumn.NULL_DISCRIMINATOR
+                : discriminatorOf.get(rowTypes[i]).byteValue();
+      }
+      Column built =
+          new Columns.DynamicColumn(
+              type,
+              new Columns.VariantColumn(
+                  type, discriminators, variants, Arrays.copyOf(positions, size)),
+              sharedIndex,
+              List.copyOf(discoveredTypes.values()));
+      size = 0;
+      discovered.clear();
+      discoveredTypes.clear();
+      counts.clear();
+      return built;
+    }
+  }
+
+  /**
+   * Builds untyped JSON columns from maps: each row is a {@code Map} whose keys are paths (nested
+   * maps flatten with dots) and whose values follow the Dynamic inference rules. Paths absent from
+   * a row hold NULL. Typed path declarations are not supported for writes yet; the shared data
+   * always travels empty.
+   */
+  private static final class JsonAppender implements Appender {
+    private final ClickHouseType.JsonType type;
+    private final java.util.TreeMap<String, DynamicAppender> paths = new java.util.TreeMap<>();
+    private int rows;
+
+    JsonAppender(ClickHouseType.JsonType type) {
+      this.type = type;
+      if (!JsonTypeArguments.typedPaths(type, 512, 32).isEmpty()) {
+        throw new UnsupportedClickHouseTypeException(
+            "Writing JSON columns with typed path declarations is not supported yet: "
+                + type.name());
+      }
+    }
+
+    @Override
+    public void append(Object value) {
+      Map<String, Object> flattened = new java.util.LinkedHashMap<>();
+      if (value != null) {
+        if (!(value instanceof Map<?, ?> map)) {
+          throw mismatch(value, type);
+        }
+        flatten("", map, flattened);
+      }
+      for (Map.Entry<String, Object> entry : flattened.entrySet()) {
+        DynamicAppender path =
+            paths.computeIfAbsent(
+                entry.getKey(),
+                name -> {
+                  DynamicAppender fresh =
+                      new DynamicAppender(
+                          new ClickHouseType.DynamicType(java.util.Optional.empty()));
+                  for (int i = 0; i < rows; i++) {
+                    fresh.append(null); // rows before this path appeared hold NULL
+                  }
+                  return fresh;
+                });
+        path.append(entry.getValue());
+      }
+      for (Map.Entry<String, DynamicAppender> entry : paths.entrySet()) {
+        if (!flattened.containsKey(entry.getKey())) {
+          entry.getValue().append(null);
+        }
+      }
+      rows++;
+    }
+
+    private static void flatten(String prefix, Map<?, ?> map, Map<String, Object> into) {
+      for (Map.Entry<?, ?> entry : map.entrySet()) {
+        if (!(entry.getKey() instanceof String key) || key.isEmpty()) {
+          throw new ChordTypeException("JSON paths must be non empty strings");
+        }
+        String path = prefix.isEmpty() ? key : prefix + "." + key;
+        if (entry.getValue() instanceof Map<?, ?> nested) {
+          flatten(path, nested, into);
+        } else {
+          into.put(path, entry.getValue());
+        }
+      }
+    }
+
+    @Override
+    public void appendDefault() {
+      append(null);
+    }
+
+    @Override
+    public Column finish() {
+      java.util.LinkedHashMap<String, Columns.DynamicColumn> dynamicPaths =
+          new java.util.LinkedHashMap<>();
+      for (Map.Entry<String, DynamicAppender> entry : paths.entrySet()) {
+        dynamicPaths.put(entry.getKey(), (Columns.DynamicColumn) entry.getValue().finish());
+      }
+      Appender sharedData =
+          appenderFor(
+              new ClickHouseType.MapType(
+                  new ClickHouseType.StringType(), new ClickHouseType.StringType()));
+      for (int i = 0; i < rows; i++) {
+        sharedData.append(Map.of());
+      }
+      Column built =
+          new Columns.JsonColumn(
+              type, rows, Map.of(), dynamicPaths, (Columns.MapColumn) sharedData.finish());
+      rows = 0;
+      paths.clear();
       return built;
     }
   }
