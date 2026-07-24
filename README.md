@@ -4,9 +4,13 @@ A Java client for [ClickHouse](https://clickhouse.com) built on the ClickHouse *
 protocol**. The native protocol implementation is the product: no HTTP tunnelling, no JDBC as the
 internal abstraction, no wrapping of `clickhouse-client`.
 
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.orhaugh/chord-bom?label=maven%20central)](https://central.sonatype.com/artifact/io.github.orhaugh/chord-bom)
+[![Javadoc](https://javadoc.io/badge2/io.github.orhaugh/chord-client/javadoc.svg)](https://javadoc.io/doc/io.github.orhaugh/chord-client)
 [![CI](https://github.com/orhaugh/CHord/actions/workflows/ci.yml/badge.svg)](https://github.com/orhaugh/CHord/actions/workflows/ci.yml)
 [![ClickHouse compatibility](https://github.com/orhaugh/CHord/actions/workflows/compatibility.yml/badge.svg)](https://github.com/orhaugh/CHord/actions/workflows/compatibility.yml)
+[![CodeQL](https://github.com/orhaugh/CHord/actions/workflows/codeql.yml/badge.svg)](https://github.com/orhaugh/CHord/actions/workflows/codeql.yml)
 [![License](https://img.shields.io/badge/licence-Apache%202.0-blue.svg)](LICENSE)
+[![Java](https://img.shields.io/badge/java-21%2B-blue.svg)](https://openjdk.org/projects/jdk/21/)
 
 ## Status
 
@@ -59,7 +63,9 @@ protocol revision 54458 are refused explicitly. A protocol revision is not a ser
 
 ## Using it today
 
-Maven Central releases ship under these coordinates, aligned by the BOM:
+Releases ship to [Maven Central](https://central.sonatype.com/artifact/io.github.orhaugh/chord-bom)
+under these coordinates, aligned by the BOM; API docs for every module are on
+[javadoc.io](https://javadoc.io/doc/io.github.orhaugh/chord-client):
 
 ```xml
 <dependencyManagement>
