@@ -3,6 +3,12 @@
 Thanks for considering a contribution. CHord is a wire protocol implementation, so the bar for
 correctness evidence is deliberately high; this document tells you how to clear it.
 
+## Reporting bugs and requesting features
+
+Use the [issue templates](https://github.com/orhaugh/CHord/issues/new/choose) for bugs and
+feature requests. Suspected vulnerabilities never go in a public issue; follow
+[SECURITY.md](SECURITY.md) instead.
+
 ## Toolchain
 
 - JDK 21 or newer (CI tests 21, 23 and 25; published bytecode targets 21)

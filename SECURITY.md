@@ -2,12 +2,13 @@
 
 ## Supported versions
 
-CHord has no published release yet; security fixes land on `main`. Once releases exist, the
-latest minor release line receives security fixes and this table will say so explicitly.
+The latest minor release line receives security fixes. Before 1.0.0 there are no long term
+support lines: a fix ships as the next release on the current line.
 
 | Version | Supported |
 |---|---|
-| main | Yes |
+| 0.2.x | Yes |
+| 0.1.x | No, upgrade to 0.2.x |
 
 ## Reporting a vulnerability
 
